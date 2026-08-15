@@ -189,17 +189,28 @@ class PlatformCapabilities:
         """
         Refuses /sdcard, /storage/emulated/0, /mnt/sdcard for private credentials.
         """
-        normalized = os.path.normpath(path)
+        normalized = os.path.normpath(str(path)).lower().replace('\\', '/')
         unsafe_prefixes = [
             "/sdcard",
-            "/storage/emulated",
+            "/storage",
             "/mnt/sdcard",
-            "/storage/self/primary",
             "/mnt/media_rw",
+            "/data/sdcard",
+            "/data/media",
+            "sdcard",
+            "storage",
+            "mnt/sdcard",
+            "mnt/media_rw",
+            "data/sdcard",
+            "data/media",
         ]
-        # Also check for relative / simulated sdcard paths in test env
         for unsafe in unsafe_prefixes:
-            if normalized.startswith(unsafe) or f"/{unsafe.strip('/')}" in normalized or "/sdcard" in normalized or "/storage/emulated/0" in normalized:
+            if (
+                normalized == unsafe
+                or normalized.startswith(f"{unsafe}/")
+                or (unsafe.startswith("/") and normalized.startswith(unsafe))
+                or f"/{unsafe.lstrip('/')}" in normalized
+            ):
                 raise StorageSafetyError(
                     f"GROK_HOME cannot reside on Android shared storage ({path}). "
                     f"Owner-only permissions (0700) are required for credentials."
@@ -273,10 +284,17 @@ class ToolResolverSeam:
         self.env = env
 
     def resolve_tool(self, name: str) -> str:
+        # 1. Check PATH
+        path_env = os.environ.get("PATH")
+        if path_env:
+            sh_path = shutil.which(name, path=path_env)
+            if sh_path:
+                return sh_path
+        # 2. Check $PREFIX/bin mock tools
         if name in self.env.mock_tools:
             return self.env.mock_tools[name]
-        # Check isolated PATH
-        sh_path = shutil.which(name, path=os.environ.get("PATH", self.env.bin_dir))
+        # 3. Check fallback bin_dir
+        sh_path = shutil.which(name, path=self.env.bin_dir)
         if sh_path:
             return sh_path
         raise ToolResolutionError(

@@ -79,6 +79,16 @@ pub fn system_config_dir() -> Option<PathBuf> {
     crate::platform::PlatformCapabilities::current().system_config_dir()
 }
 
+/// Temporary directory: `$TMPDIR` or `$PREFIX/tmp` on Termux, `/tmp` on desktop Linux/macOS.
+pub fn temp_dir() -> PathBuf {
+    crate::platform::PlatformCapabilities::current().temp_dir()
+}
+
+/// Create a Unix domain socket path with a Blake3 short hash to stay under 108 bytes.
+pub fn create_socket_path(session_id: &str) -> Result<PathBuf, crate::platform::PlatformError> {
+    crate::platform::PlatformCapabilities::current().create_socket_path(session_id)
+}
+
 /// System path for the managed-settings.json used for settings compat, if it exists.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn claude_managed_settings_path() -> Option<PathBuf> {
@@ -480,5 +490,18 @@ mod tests {
     #[test]
     fn slugify_truncates() {
         assert_eq!(slugify(&"a".repeat(100), 10).len(), 10);
+    }
+
+    #[test]
+    fn paths_temp_dir_resolves() {
+        let tmp = temp_dir();
+        assert!(!tmp.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn paths_create_socket_path_bounds() {
+        let sock = create_socket_path("session-12345").unwrap();
+        assert!(sock.to_string_lossy().contains("grok-"));
+        assert!(sock.to_string_lossy().ends_with(".sock"));
     }
 }

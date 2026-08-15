@@ -29,6 +29,23 @@ use tokio::task::JoinHandle;
 #[cfg(unix)]
 pub const DEFAULT_DIAG_SOCKET_PATH: &str = "/tmp/workspace-server.sock";
 
+/// Resolves the default diagnostics socket path dynamically respecting `$TMPDIR` / `$PREFIX/tmp`.
+#[cfg(unix)]
+pub fn default_diag_socket_path() -> PathBuf {
+    let tmp = std::env::var("TMPDIR")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var("PREFIX")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .map(|p| PathBuf::from(p).join("tmp"))
+        })
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
+    tmp.join("workspace-server.sock")
+}
+
 /// Default loopback TCP port for Windows guests.
 pub const DEFAULT_DIAG_PORT: u16 = 6016;
 
@@ -900,5 +917,12 @@ mod tests {
         let port = serve_with_log(Some(dir.path().join("never-created.log"))).await;
         let (status, _, _) = get_text(port, "/logs").await;
         assert_eq!(status, 404);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_default_diag_socket_path() {
+        let path = default_diag_socket_path();
+        assert!(path.to_string_lossy().ends_with("workspace-server.sock"));
     }
 }

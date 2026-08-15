@@ -92,7 +92,7 @@ struct Args {
     /// Unix-socket path for the in-guest diagnostics HTTP server
     /// (`/ready`, `/statusz`).
     #[cfg(unix)]
-    #[arg(long, default_value = diag_server::DEFAULT_DIAG_SOCKET_PATH)]
+    #[arg(long, default_value_os_t = diag_server::default_diag_socket_path())]
     diag_socket: PathBuf,
     /// Loopback TCP port for the diagnostics HTTP server (Windows guests,
     /// which lack a reliable Unix-socket HTTP client).
