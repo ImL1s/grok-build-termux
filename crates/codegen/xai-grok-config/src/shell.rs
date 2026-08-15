@@ -449,7 +449,25 @@ fn resolve_unix_shell_path(kind: UnixShellKind) -> String {
         return p.to_string_lossy().into_owned();
     }
 
-    // 4) Common install dirs.
+    // 4) Termux $PREFIX/bin and Android candidate dirs.
+    if let Ok(pfx) = std::env::var("PREFIX") {
+        let p = std::path::PathBuf::from(pfx).join("bin").join(name);
+        if is_executable(&p) {
+            return p.to_string_lossy().into_owned();
+        }
+    }
+    for dir in [
+        "/data/data/com.termux/files/usr/bin",
+        "/system/bin",
+        "/system/xbin",
+    ] {
+        let p = std::path::PathBuf::from(dir).join(name);
+        if is_executable(&p) {
+            return p.to_string_lossy().into_owned();
+        }
+    }
+
+    // 5) Common install dirs.
     for dir in ["/bin", "/usr/bin", "/usr/local/bin", "/opt/homebrew/bin"] {
         let p = std::path::PathBuf::from(dir).join(name);
         if is_executable(&p) {
@@ -457,10 +475,11 @@ fn resolve_unix_shell_path(kind: UnixShellKind) -> String {
         }
     }
 
-    // 5) Hardcoded fallback — same as historical behavior. Spawn will fail at
+    // 6) Hardcoded fallback — same as historical behavior. Spawn will fail at
     //    runtime on a pure NixOS host with no bash, but that's no worse than
     //    before this resolver existed.
     kind.hardcoded_default().to_string()
+
 }
 
 /// Whether `path` is an executable file.

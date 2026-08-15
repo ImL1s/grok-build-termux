@@ -14,5 +14,7 @@ profile = "default" # this will override global preferred profile if such is set
 targets = [
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
+    "aarch64-linux-android",
+    "x86_64-linux-android",
 ] # host target will be added automatically
 # force CI

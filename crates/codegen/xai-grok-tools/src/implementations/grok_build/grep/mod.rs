@@ -835,15 +835,21 @@ async fn prepare_grep(
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
+            let hint = if e.kind() == std::io::ErrorKind::NotFound {
+                format!(". {}", crate::resolver::ToolResolver::remediation_hint(&crate::resolver::TOOL_RG))
+            } else {
+                String::new()
+            };
             return Ok(GrepStep::Early(GrepSearchOutput {
                 stdout: Vec::new(),
-                stderr: format!("Error calling tool: {}", e).into_bytes(),
+                stderr: format!("Error calling tool: {e}{hint}").into_bytes(),
                 exit_code: -1,
                 match_count: 0,
                 file_matches: Vec::new(),
             }));
         }
     };
+
 
     // Take pipes so child remains accessible for cleanup on timeout.
     let stdout_pipe = child.stdout.take();

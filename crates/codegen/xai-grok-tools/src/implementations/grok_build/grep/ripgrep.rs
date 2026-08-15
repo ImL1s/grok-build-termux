@@ -54,6 +54,10 @@ pub fn rg_path() -> PathBuf {
                 if let Ok(p) = std::env::var("RG_BIN_PATH") {
                     return PathBuf::from(p);
                 }
+                // Try standard ToolResolver (checks PATH, $PREFIX/bin, Android system paths, etc.)
+                if let Ok(p) = crate::resolver::ToolResolver::resolve(&crate::resolver::TOOL_RG) {
+                    return p;
+                }
                 // Some hermetic test runners set RUNFILES_DIR and ship rg as a
                 // data dependency rather than on PATH. Scan for a directory
                 // entry containing "ripgrep_hermetic" and prefer arch-scoped
@@ -75,6 +79,7 @@ pub fn rg_path() -> PathBuf {
                     }
                 }
                 PathBuf::from("rg")
+
             }
         })
         .clone()

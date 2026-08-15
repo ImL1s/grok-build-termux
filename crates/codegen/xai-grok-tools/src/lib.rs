@@ -27,11 +27,15 @@ pub mod notification;
 pub mod persistence;
 pub mod registry;
 pub mod reminders;
+pub mod resolver;
 pub mod retry;
 pub mod tool_taxonomy;
 pub mod types;
 pub mod util;
 pub mod versions;
+
+pub use resolver::{ToolRequirement, ToolResolutionError, ToolResolver, ToolSpec};
+
 
 pub use attribution::{
     Auth401AttributionCallback, BEARER_SUFFIX_LEN, SharedAttributionCallback, ToolConsumer,

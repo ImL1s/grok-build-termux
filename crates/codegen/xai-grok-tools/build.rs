@@ -63,18 +63,20 @@ fn bundle_fd() -> Result<(), Box<dyn std::error::Error>> {
     let gen_dir = PathBuf::from(env::var("OUT_DIR")?).join("bundle-fd");
     fs::create_dir_all(&gen_dir)?;
 
-    // The consuming vendor extraction is unix-only — never bundle on
-    // Windows targets, mirroring the bfs/ugrep skip.
-    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if target_os == "windows" {
-        return Ok(());
-    }
-
     let path_override = env::var("GROK_TOOLS_BUNDLE_FD_PATH").ok();
     let is_release = env::var("PROFILE").as_deref() == Ok("release");
     if path_override.is_none() && !is_release {
         return Ok(());
     }
+
+    // The consuming vendor extraction is unix-only — never bundle on
+    // Windows targets, mirroring the bfs/ugrep skip. On Android, native tools
+    // are resolved from Termux $PATH / $PREFIX/bin.
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if (target_os == "windows" || target_os == "android") && path_override.is_none() {
+        return Ok(());
+    }
+
 
     // Per-target version: macOS x86_64 pins the last release with that asset.
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
@@ -210,7 +212,9 @@ fn bundle_search_tool(
 
     // The consumer (`embedded_search_tools`) is `#[cfg(unix)]`, so embedding on a
     // Windows target is dead weight — skip (mirrors the ripgrep Windows skip).
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+    // Android/Termux resolves tools natively from $PATH / $PREFIX/bin.
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os == "windows" || target_os == "android" {
         return Ok(());
     }
 
@@ -255,10 +259,12 @@ fn bundle_rg() -> Result<(), Box<dyn std::error::Error>> {
     // on cfg(bundle_rg) compiled-out, so the runtime falls back to `rg` on
     // PATH. Users install ripgrep separately (winget / scoop). An explicit
     // GROK_TOOLS_BUNDLE_RG_PATH still bundles regardless of target.
+    // On Android/Termux, native ripgrep is resolved from $PATH / $PREFIX/bin.
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if target_os == "windows" && path_override.is_none() {
+    if (target_os == "windows" || target_os == "android") && path_override.is_none() {
         return Ok(());
     }
+
 
     // Expose cfg so the crate can include the bundled bytes.
     println!("cargo:rustc-cfg=bundle_rg");

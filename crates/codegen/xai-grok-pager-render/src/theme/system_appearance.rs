@@ -110,6 +110,7 @@ fn resolve_appearance_chain(
 /// Used by `grok wrap` to stamp the *local* OS theme into the child env
 /// before SSH. Must not consult env hints — those may be a previous wrap
 /// hop's snapshot.
+#[cfg(not(target_os = "android"))]
 #[must_use]
 pub fn detect_desktop() -> Option<SystemAppearance> {
     match dark_light::detect() {
@@ -119,6 +120,14 @@ pub fn detect_desktop() -> Option<SystemAppearance> {
         _ => None,
     }
 }
+
+/// On Android/Termux, desktop appearance APIs do not exist; return `None` gracefully.
+#[cfg(target_os = "android")]
+#[must_use]
+pub fn detect_desktop() -> Option<SystemAppearance> {
+    None
+}
+
 
 /// Inner detection via desktop APIs, explicit stamps, cached OSC 11, then
 /// `COLORFGBG` (no mock, no new OSC 11 probe).

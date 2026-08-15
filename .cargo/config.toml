@@ -64,6 +64,22 @@ rustflags = ["-C", "force-unwind-tables=yes", "-C", "target-feature=+crt-static"
 [target.aarch64-pc-windows-msvc]
 rustflags = ["-C", "force-unwind-tables=yes", "-C", "target-feature=+crt-static"]
 
+[target.aarch64-linux-android]
+rustflags = [
+    "-C", "target-cpu=generic",
+    "-C", "force-unwind-tables=yes",
+    "-C", "link-arg=-Wl,-z,relro,-z,now,-z,noexecstack",
+    "-C", "link-arg=-Wl,-z,max-page-size=16384",
+]
+
+[target.x86_64-linux-android]
+rustflags = [
+    "-C", "force-unwind-tables=yes",
+    "-C", "link-arg=-Wl,-z,relro,-z,now,-z,noexecstack",
+    "-C", "link-arg=-Wl,-z,max-page-size=16384",
+]
+
+
 
 # jemalloc page size for Apple Silicon (macOS aarch64 uses 16KB pages = 2^14).
 # This target-prefixed env var is consumed by tikv-jemalloc-sys's build.rs
