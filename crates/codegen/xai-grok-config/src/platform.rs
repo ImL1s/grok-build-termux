@@ -1,7 +1,7 @@
 //! Platform capability detection and dynamic environment resolution for Grok.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 use thiserror::Error;
 
@@ -204,7 +204,6 @@ impl PlatformCapabilities {
             let is_target_android = cfg!(target_os = "android");
             let is_target_macos = cfg!(target_os = "macos");
             let is_target_windows = cfg!(target_os = "windows");
-            let is_target_linux = cfg!(target_os = "linux");
 
             if is_target_android {
                 if prefix.is_some() || env.get_var("TERMUX_VERSION").is_some() {
@@ -216,8 +215,6 @@ impl PlatformCapabilities {
                 PlatformKind::MacOS
             } else if is_target_windows {
                 PlatformKind::Windows
-            } else if is_target_linux {
-                PlatformKind::DesktopLinux
             } else {
                 PlatformKind::DesktopLinux
             }
@@ -360,7 +357,7 @@ impl PlatformCapabilities {
         let sock_path = tmp.join(&sock_name);
 
         let path_str = sock_path.to_string_lossy();
-        if path_str.as_bytes().len() >= 108 {
+        if path_str.len() >= 108 {
             return Err(PlatformError::SocketPathTooLong(path_str.into_owned()));
         }
         Ok(sock_path)
@@ -390,49 +387,199 @@ impl PlatformCapabilities {
 /// Known Android shared storage path prefixes and subsegments that lack POSIX DAC permissions.
 const ANDROID_SHARED_STORAGE_PREFIXES: &[&str] = &[
     "/sdcard",
-    "/storage/emulated",
-    "/storage/self",
+    "/storage",
     "/mnt/sdcard",
     "/mnt/media_rw",
-    "/storage",
+    "/data/sdcard",
+    "/data/media",
+    "sdcard",
+    "storage",
+    "mnt/sdcard",
+    "mnt/media_rw",
+    "data/sdcard",
+    "data/media",
 ];
+
+/// Lexically normalize a path by resolving `.` and `..` components without requiring disk access.
+pub fn normalize_lexical(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    let mut is_absolute = false;
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => {
+                normalized.push(prefix.as_os_str());
+            }
+            Component::RootDir => {
+                normalized.push(Component::RootDir.as_os_str());
+                is_absolute = true;
+            }
+            Component::CurDir => {
+                // Ignore '.'
+            }
+            Component::ParentDir => {
+                let pop_success = match normalized.components().next_back() {
+                    Some(Component::Normal(_)) => {
+                        normalized.pop();
+                        true
+                    }
+                    _ => false,
+                };
+                if !pop_success && !is_absolute {
+                    normalized.push(Component::ParentDir.as_os_str());
+                }
+            }
+            Component::Normal(c) => {
+                normalized.push(c);
+            }
+        }
+    }
+    normalized
+}
+
+/// Helper to check if a string representation of a normalized path matches any quarantine prefix or pattern.
+fn is_quarantined_str(norm_str: &str) -> bool {
+    let lower = norm_str.to_lowercase();
+    let lower = lower.replace('\\', "/");
+
+    for prefix in ANDROID_SHARED_STORAGE_PREFIXES {
+        if lower == *prefix
+            || lower.starts_with(&format!("{prefix}/"))
+            || (prefix.starts_with('/') && lower.starts_with(prefix))
+        {
+            return true;
+        }
+    }
+
+    if lower.contains("/sdcard")
+        || lower.contains("/storage/")
+        || lower == "/storage"
+        || lower.contains("/storage/emulated")
+        || lower.contains("/storage/self")
+        || lower.contains("/mnt/sdcard")
+        || lower.contains("/mnt/media_rw")
+    {
+        return true;
+    }
+
+    false
+}
 
 /// Validates that a path is safe for storing private keys, credentials, or state.
 ///
 /// Strictly refuses Android shared storage paths to prevent world-readable leaks.
 pub fn validate_storage_safety(path: &Path) -> Result<(), StorageSafetyError> {
-    let path_str = path.to_string_lossy();
-    let norm = path_str.replace('\\', "/");
+    validate_storage_safety_depth(path, 0)
+}
 
-    for prefix in ANDROID_SHARED_STORAGE_PREFIXES {
-        if norm == *prefix
-            || norm.starts_with(&format!("{prefix}/"))
-            || norm.starts_with(prefix)
-            || norm.contains("/sdcard")
-            || norm.contains("/storage/emulated/0")
+fn validate_storage_safety_depth(path: &Path, depth: usize) -> Result<(), StorageSafetyError> {
+    if depth > 32 {
+        // Prevent infinite symlink recursion loops
+        return Ok(());
+    }
+
+    // 1. Lexical normalization & check on the provided path
+    let normalized = normalize_lexical(path);
+    let norm_str = normalized.to_string_lossy();
+    if is_quarantined_str(&norm_str) {
+        return Err(StorageSafetyError::SharedStorageQuarantine {
+            path: path.to_path_buf(),
+            reason: "Android shared storage does not enforce POSIX user/group permissions and is accessible across apps.",
+        });
+    }
+
+    // 2. Direct symlink inspection (handles existing AND dangling symlinks)
+    let is_link = path.is_symlink()
+        || std::fs::symlink_metadata(path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false);
+
+    if is_link
+        && let Ok(link_dest) = std::fs::read_link(path)
+    {
+        let resolved_dest = if link_dest.is_relative() {
+            if let Some(parent) = path.parent() {
+                parent.join(&link_dest)
+            } else {
+                link_dest
+            }
+        } else {
+            link_dest
+        };
+
+        if let Err(StorageSafetyError::SharedStorageQuarantine { reason, .. }) =
+            validate_storage_safety_depth(&resolved_dest, depth + 1)
         {
             return Err(StorageSafetyError::SharedStorageQuarantine {
                 path: path.to_path_buf(),
-                reason: "Android shared storage does not enforce POSIX user/group permissions and is accessible across apps.",
+                reason,
             });
         }
     }
 
-    // If the path exists on disk, also check its canonicalized target in case of symlinks
-    if let Ok(canon) = std::fs::canonicalize(path) {
-        let canon_str = canon.to_string_lossy().replace('\\', "/");
-        for prefix in ANDROID_SHARED_STORAGE_PREFIXES {
-            if canon_str == *prefix
-                || canon_str.starts_with(&format!("{prefix}/"))
-                || canon_str.starts_with(prefix)
-                || canon_str.contains("/sdcard")
-                || canon_str.contains("/storage/emulated/0")
-            {
-                return Err(StorageSafetyError::SharedStorageQuarantine {
-                    path: path.to_path_buf(),
-                    reason: "Canonical target resolves to Android shared storage which lacks POSIX permissions.",
-                });
+    // 3. Full disk canonicalization if the target already exists on disk
+    if let Ok(canon) = dunce::canonicalize(path) {
+        let canon_norm = normalize_lexical(&canon);
+        let canon_str = canon_norm.to_string_lossy();
+        if is_quarantined_str(&canon_str) {
+            return Err(StorageSafetyError::SharedStorageQuarantine {
+                path: path.to_path_buf(),
+                reason: "Canonical target resolves to Android shared storage which lacks POSIX permissions.",
+            });
+        }
+    } else {
+        // 4. If canonicalize failed (e.g. NotFound for non-existent target inside symlinked parent dir),
+        // inspect existing ancestor paths for symlinks to shared storage.
+        let mut current = path;
+        while let Some(parent) = current.parent() {
+            if parent.as_os_str().is_empty() || parent == Path::new("/") {
+                break;
             }
+
+            let parent_is_link = parent.is_symlink()
+                || std::fs::symlink_metadata(parent)
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false);
+
+            if parent_is_link {
+                if let Ok(link_dest) = std::fs::read_link(parent) {
+                    let resolved_dest = if link_dest.is_relative() {
+                        if let Some(p) = parent.parent() {
+                            p.join(&link_dest)
+                        } else {
+                            link_dest
+                        }
+                    } else {
+                        link_dest
+                    };
+
+                    if let Ok(rel) = path.strip_prefix(parent) {
+                        let reconstructed = resolved_dest.join(rel);
+                        if let Err(StorageSafetyError::SharedStorageQuarantine { reason, .. }) =
+                            validate_storage_safety_depth(&reconstructed, depth + 1)
+                        {
+                            return Err(StorageSafetyError::SharedStorageQuarantine {
+                                path: path.to_path_buf(),
+                                reason,
+                            });
+                        }
+                    }
+                }
+            } else if let Ok(canon_parent) = dunce::canonicalize(parent) {
+                if let Ok(rel) = path.strip_prefix(parent) {
+                    let reconstructed = canon_parent.join(rel);
+                    let canon_norm = normalize_lexical(&reconstructed);
+                    let canon_str = canon_norm.to_string_lossy();
+                    if is_quarantined_str(&canon_str) {
+                        return Err(StorageSafetyError::SharedStorageQuarantine {
+                            path: path.to_path_buf(),
+                            reason: "Canonical target resolves to Android shared storage which lacks POSIX permissions.",
+                        });
+                    }
+                }
+                break;
+            }
+            current = parent;
         }
     }
 
@@ -628,6 +775,30 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_lexical() {
+        assert_eq!(
+            normalize_lexical(Path::new("/a/b/../c")),
+            PathBuf::from("/a/c")
+        );
+        assert_eq!(
+            normalize_lexical(Path::new("/a/./b/../../c")),
+            PathBuf::from("/c")
+        );
+        assert_eq!(
+            normalize_lexical(Path::new("/data/data/com.termux/files/home/../../../../../storage/emulated/0/.grok")),
+            PathBuf::from("/storage/emulated/0/.grok")
+        );
+        assert_eq!(
+            normalize_lexical(Path::new("/data/data/com.termux/files/home/../../../../sdcard/.grok")),
+            PathBuf::from("/data/sdcard/.grok")
+        );
+        assert_eq!(
+            normalize_lexical(Path::new("a/b/../../c")),
+            PathBuf::from("c")
+        );
+    }
+
+    #[test]
     fn test_storage_safety_quarantine_rejections() {
         assert!(validate_storage_safety(Path::new("/sdcard")).is_err());
         assert!(validate_storage_safety(Path::new("/sdcard/.grok")).is_err());
@@ -635,9 +806,124 @@ mod tests {
         assert!(validate_storage_safety(Path::new("/mnt/sdcard/grok")).is_err());
         assert!(validate_storage_safety(Path::new("/storage/self/primary/.grok")).is_err());
         assert!(validate_storage_safety(Path::new("/mnt/media_rw/sdcard0")).is_err());
+        assert!(validate_storage_safety(Path::new("sdcard/.grok")).is_err());
+        assert!(validate_storage_safety(Path::new("storage/emulated/0/.grok")).is_err());
+        assert!(validate_storage_safety(Path::new("/SDCARD/.grok")).is_err());
+        assert!(validate_storage_safety(Path::new("/STORAGE/EMULATED/0/.grok")).is_err());
+        assert!(validate_storage_safety(Path::new("/data/data/com.termux/files/home/../../../../sdcard/.grok")).is_err());
         assert!(validate_storage_safety(Path::new("/data/data/com.termux/files/home/.grok")).is_ok());
         assert!(validate_storage_safety(Path::new("/home/user/.grok")).is_ok());
         assert!(validate_storage_safety(Path::new("/Users/user/.grok")).is_ok());
+    }
+
+    #[test]
+    fn test_dangling_symlink_quarantine_unit() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let link_path = tmp.path().join("dangling_sdcard_link");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink("/sdcard/.grok", &link_path).expect("create symlink");
+            let res = validate_storage_safety(&link_path);
+            assert!(res.is_err(), "Dangling symlink to /sdcard must be quarantined");
+            match res.unwrap_err() {
+                StorageSafetyError::SharedStorageQuarantine { path, reason } => {
+                    assert_eq!(path, link_path);
+                    assert!(!reason.is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_lexical_traversal_quarantine_unit() {
+        let traversals = [
+            "/data/data/com.termux/files/home/../../../../storage/emulated/0/.grok",
+            "/data/data/com.termux/files/home/../../../../sdcard/.grok",
+            "/data/data/com.termux/files/usr/../home/../../../../sdcard/keys",
+            "/data/data/com.termux/files/home/././../../../../storage/1234-5678/.grok",
+            "/data/data/com.termux/files/home/subdir/../../../../../mnt/sdcard/grok",
+        ];
+        for path in traversals {
+            let res = validate_storage_safety(Path::new(path));
+            assert!(
+                res.is_err(),
+                "Expected lexical traversal '{}' to be quarantined, got {:?}",
+                path,
+                res
+            );
+        }
+    }
+
+    #[test]
+    fn test_relative_path_prefix_quarantine_unit() {
+        let rel_paths = [
+            "sdcard/.grok",
+            "sdcard/credentials.json",
+            "storage/emulated/0/.grok",
+            "storage/self/primary/.grok",
+            "mnt/sdcard/keys",
+            "mnt/media_rw/sdcard0",
+            "data/sdcard/test",
+            "data/media/0/grok",
+        ];
+        for path in rel_paths {
+            let res = validate_storage_safety(Path::new(path));
+            assert!(
+                res.is_err(),
+                "Expected relative prefix '{}' to be quarantined, got {:?}",
+                path,
+                res
+            );
+        }
+    }
+
+    #[test]
+    fn test_case_insensitive_matching_unit() {
+        let case_variants = [
+            "/SDCARD/.grok",
+            "/Sdcard/.grok",
+            "/sDcaRd/credentials",
+            "/STORAGE/EMULATED/0/.grok",
+            "/Storage/Emulated/0/.grok",
+            "/STORAGE/SELF/PRIMARY/.grok",
+            "/MNT/SDCARD/.grok",
+            "/Mnt/Media_Rw/usb",
+            "SDCARD/.grok",
+            "Storage/Emulated/0/.grok",
+            "Mnt/Sdcard/keys",
+        ];
+        for path in case_variants {
+            let res = validate_storage_safety(Path::new(path));
+            assert!(
+                res.is_err(),
+                "Expected case variant '{}' to be quarantined, got {:?}",
+                path,
+                res
+            );
+        }
+    }
+
+    #[test]
+    fn test_valid_termux_paths_accepted_unit() {
+        let valid_paths = [
+            "/data/data/com.termux/files/home/.grok",
+            "/data/data/com.termux/files/usr/tmp",
+            "/data/data/com.termux/files/usr/etc/grok",
+            "/data/data/com.termux/files/home/workspace/project",
+            "/home/developer/.grok",
+            "/Users/developer/.grok",
+            "/var/tmp/grok",
+        ];
+        for path in valid_paths {
+            let res = validate_storage_safety(Path::new(path));
+            assert!(
+                res.is_ok(),
+                "Expected valid path '{}' to be accepted, got {:?}",
+                path,
+                res
+            );
+        }
     }
 
     #[test]
