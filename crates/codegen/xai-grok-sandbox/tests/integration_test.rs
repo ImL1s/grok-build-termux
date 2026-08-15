@@ -8,7 +8,7 @@
 // `support_info` is only available with the `enforce` feature (it returns a
 // nono type), so gate this test the same way.
 #[test]
-#[cfg(all(feature = "enforce", unix))]
+#[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
 fn test_support_info() {
     // Verify that nono can report platform support status without applying
     let support = xai_grok_sandbox::SandboxManager::support_info();
@@ -23,7 +23,7 @@ fn test_support_info() {
 
 // `to_capability_set` is only available with the `enforce` feature.
 #[test]
-#[cfg(all(feature = "enforce", unix))]
+#[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
 fn test_profile_capability_set_construction() {
     use xai_grok_sandbox::ProfileName;
 

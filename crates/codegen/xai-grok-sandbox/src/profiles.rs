@@ -3,21 +3,21 @@
 //! A custom profile's `deny` list is kernel-enforced (read + write/rename) on
 //! both platforms.
 
-#[cfg(all(feature = "enforce", unix))]
+#[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
 use nono::{AccessMode, CapabilitySet};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::allow_path::normalize_allow_path;
-#[cfg(all(feature = "enforce", unix))]
+#[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
 use crate::deny::{
     apply_deny_globs_to_capability_set, apply_deny_paths_to_capability_set,
     apply_write_deny_paths_to_capability_set, effective_deny_paths, partition_deny_entries,
 };
 use crate::hook_write_deny::profile_hook_write_deny;
 use crate::paths::grok_home;
-#[cfg(all(feature = "enforce", unix))]
+#[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
 use crate::paths::{DEVICE_DIRS, DEVICE_FILES};
 use crate::paths::{essential_writable_paths, essential_writable_paths_minimal};
 use xai_grok_config::GlobalHookSource;
@@ -189,7 +189,7 @@ fn load_config_file(path: &Path) -> Option<SandboxConfig> {
 /// errors — notably **EISDIR** on directory nodes — must not drop the path:
 /// directories are granted via [`DEVICE_DIRS`] / `allow_path`, and a plain
 /// `File::open` EISDIR does not mean Landlock would reject the grant.
-#[cfg(all(feature = "enforce", unix))]
+#[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
 fn device_file_openable(path: &Path) -> bool {
     match std::fs::File::open(path) {
         Ok(_) => true,
@@ -205,7 +205,7 @@ fn device_file_openable(path: &Path) -> bool {
 
 impl ProfileName {
     /// Convert this profile into a nono `CapabilitySet` for the given workspace.
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     pub fn to_capability_set(&self, workspace: &Path) -> anyhow::Result<CapabilitySet> {
         let config = load_sandbox_config(workspace);
         self.to_capability_set_with_config(workspace, &config)
@@ -215,7 +215,7 @@ impl ProfileName {
     ///
     /// A custom profile's own `deny` list is kernel-enforced (read + write/rename)
     /// on top of the base profile.
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     pub fn to_capability_set_with_config(
         &self,
         workspace: &Path,
@@ -229,7 +229,7 @@ impl ProfileName {
         Self::capability_set_from_profile(workspace, &profile)
     }
 
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     pub(crate) fn capability_set_from_profile(
         workspace: &Path,
         profile: &SandboxProfile,
@@ -671,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     fn strict_allowlist_includes_run_and_var_when_present() {
         if skip_if_host_hook_write_deny_unresolvable() {
             return;
@@ -699,7 +699,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     fn base_profile_capability_set_builds() {
         if skip_if_host_hook_write_deny_unresolvable() {
             return;
@@ -712,7 +712,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     fn custom_profile_from_config() {
         if skip_if_host_hook_write_deny_unresolvable() {
             return;
@@ -737,7 +737,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     fn custom_extends_devbox_has_no_data_in_deny() {
         // Regression: devbox excludes /data via a local list, not profile.deny, so
         // a custom profile extending devbox must not inherit /data into the kernel
@@ -765,7 +765,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     fn custom_profile_not_found() {
         let workspace = std::env::current_dir().unwrap();
         let config = SandboxConfig::default();
@@ -869,7 +869,7 @@ read_write = ["/tmp/ci-artifacts"]
     /// Building the capability set pre-creates missing `read_write` dirs; a
     /// trailing-`/**` entry must create/grant the parent, never a literal `**` dir.
     #[test]
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     fn capability_set_trailing_glob_does_not_create_starstar_dir() {
         if skip_if_host_hook_write_deny_unresolvable() {
             return;
@@ -975,7 +975,7 @@ read_write = ["/tmp/ci-artifacts"]
     }
 
     #[test]
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     fn extends_off_returns_err_not_panic() {
         let workspace = std::env::current_dir().unwrap();
         let config = SandboxConfig {
@@ -1001,7 +1001,7 @@ read_write = ["/tmp/ci-artifacts"]
     }
 
     #[test]
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     fn resolve_off_returns_err_not_panic() {
         let workspace = std::env::current_dir().unwrap();
         let err = ProfileName::Off
@@ -1011,7 +1011,7 @@ read_write = ["/tmp/ci-artifacts"]
     }
 
     #[test]
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     fn enxio_device_file_is_skipped_but_directory_is_not() {
         assert!(
             device_file_openable(Path::new("/dev/null")),
@@ -1061,7 +1061,7 @@ read_write = ["/tmp/ci-artifacts"]
     /// be opened (no controlling terminal). Regression for the silent Landlock
     /// apply-abort under setsid/CI/headless.
     #[test]
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     fn strict_capability_set_builds_without_openable_dev_tty() {
         if skip_if_host_hook_write_deny_unresolvable() {
             return;
@@ -1078,7 +1078,7 @@ read_write = ["/tmp/ci-artifacts"]
     /// `/dev/fd` is a directory (→ `/proc/self/fd` on Linux). It must be granted
     /// via DEVICE_DIRS/`allow_path`, not dropped by a file-open EISDIR probe.
     #[test]
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     fn dev_fd_is_granted_as_device_dir_not_skipped_as_file() {
         assert!(
             !DEVICE_FILES.contains(&"/dev/fd"),

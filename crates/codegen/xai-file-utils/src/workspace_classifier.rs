@@ -118,7 +118,7 @@ fn is_platform_home_excluded(cwd: &Path, home: &Path) -> bool {
     false
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn is_platform_home_excluded(cwd: &Path, home: &Path) -> bool {
     let Ok(relative) = cwd.strip_prefix(home) else {
         return false;

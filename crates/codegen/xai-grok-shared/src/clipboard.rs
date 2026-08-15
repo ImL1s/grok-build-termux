@@ -306,11 +306,15 @@ pub fn native_tool_name() -> &'static str {
     {
         "pbcopy"
     }
+    #[cfg(target_os = "android")]
+    {
+        "termux-clipboard"
+    }
     #[cfg(target_os = "linux")]
     {
         platform::linux_tool_spec().map_or("arboard", |spec| spec.name)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "android", target_os = "linux")))]
     {
         "arboard"
     }
@@ -1191,7 +1195,7 @@ mod platform {
 // ---------------------------------------------------------------------------
 // Linux / Windows: arboard with CLI-tool fallback on Linux
 // ---------------------------------------------------------------------------
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(target_os = "android")))]
 mod platform {
     use super::ImageData;
     use std::process::{Command, Stdio};
@@ -2766,6 +2770,127 @@ mod platform {
         fn probe_and_lease_share_connect_deadline() {
             assert_eq!(DISPLAY_CONN_WAIT, std::time::Duration::from_secs(2));
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Android / Termux: Termux:API with ANSI OSC 52 fallback
+// ---------------------------------------------------------------------------
+#[cfg(target_os = "android")]
+mod platform {
+    use super::{ClipboardAttachments, ImageData, NativeWriteOutcome, WaylandDataControlProbe};
+    use std::io::Write;
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+
+    pub(super) fn clipboard_image_snapshot() -> (Option<u64>, bool) {
+        (None, false)
+    }
+
+    pub(super) fn clipboard_change_count() -> Option<u64> {
+        None
+    }
+
+    pub(super) fn clipboard_prewarm() {}
+
+    pub(super) fn wayland_data_control_supported() -> bool {
+        false
+    }
+
+    pub(super) fn probe_wayland_data_control() -> WaylandDataControlProbe {
+        WaylandDataControlProbe::Available(false)
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn x11_display_env_present() -> bool {
+        false
+    }
+
+    pub(super) fn get_text() -> anyhow::Result<Option<String>> {
+        let mut cmd = Command::new("termux-clipboard-get");
+        xai_tty_utils::detach_std_command(&mut cmd);
+        let output = match cmd
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+        {
+            Ok(out) => out,
+            Err(e) => {
+                tracing::debug!("termux-clipboard-get not found or failed: {e}");
+                return Ok(None);
+            }
+        };
+
+        if !output.status.success() {
+            return Ok(None);
+        }
+
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        if text.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(text))
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn get_primary_text() -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+
+    pub(super) fn set_text_with_outcome(text: &str) -> NativeWriteOutcome {
+        let mut outcome = NativeWriteOutcome {
+            cli_tools_tried: vec!["termux-clipboard-set"],
+            ..Default::default()
+        };
+
+        let mut success = false;
+        let mut cmd = Command::new("termux-clipboard-set");
+        xai_tty_utils::detach_std_command(&mut cmd);
+        if let Ok(mut child) = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            if let Ok(status) = child.wait() {
+                if status.success() {
+                    outcome.cli_ok_tools.push("termux-clipboard-set");
+                    outcome.cli_ok = true;
+                    outcome.any_ok = true;
+                    success = true;
+                }
+            }
+        }
+
+        // Fallback to ANSI OSC 52 sequence if termux-clipboard-set is unavailable or fails
+        if !success {
+            if super::set_text_osc52(text, false).is_ok() {
+                outcome.any_ok = true;
+            }
+        }
+
+        outcome
+    }
+
+    pub(super) fn get_image() -> anyhow::Result<Option<ImageData>> {
+        Ok(None)
+    }
+
+    pub(super) fn get_file_urls() -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+
+    pub(super) fn get_attachments() -> anyhow::Result<ClipboardAttachments> {
+        Ok(ClipboardAttachments::default())
+    }
+
+    pub(super) fn set_image_file(_path: &Path) -> anyhow::Result<()> {
+        anyhow::bail!("image clipboard is not supported on Android/Termux")
     }
 }
 

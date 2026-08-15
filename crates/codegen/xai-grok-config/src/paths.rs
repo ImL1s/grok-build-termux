@@ -36,7 +36,13 @@ pub fn grok_home() -> PathBuf {
     GROK_HOME
         .get_or_init(|| {
             let grok_home = if let Ok(v) = std::env::var("GROK_HOME") {
-                PathBuf::from(v)
+                let p = PathBuf::from(v);
+                if let Err(e) = crate::platform::validate_storage_safety(&p) {
+                    tracing::error!(error = %e, "Rejected insecure GROK_HOME location; falling back to default");
+                    default_grok_home()
+                } else {
+                    p
+                }
             } else {
                 default_grok_home()
             };
@@ -68,13 +74,9 @@ pub fn grok_application_in(home: &std::path::Path) -> PathBuf {
     home.join("bin").join(name)
 }
 
-/// System-wide config directory: `/etc/grok/` on Unix, `None` on Windows.
+/// System-wide config directory: `$PREFIX/etc/grok` on Termux, `/etc/grok/` on Unix, `None` on Windows.
 pub fn system_config_dir() -> Option<PathBuf> {
-    if cfg!(unix) {
-        Some(PathBuf::from("/etc/grok"))
-    } else {
-        None
-    }
+    crate::platform::PlatformCapabilities::current().system_config_dir()
 }
 
 /// System path for the managed-settings.json used for settings compat, if it exists.

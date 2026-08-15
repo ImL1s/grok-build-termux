@@ -6259,8 +6259,6 @@ dependencies = [
 [[package]]
 name = "mid"
 version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "625672364b1e9c02508daefc259ccdf07a7ecc55145769ef7938d3a815423261"
 dependencies = [
  "hex",
  "hmac-sha256",
@@ -11804,9 +11802,8 @@ dependencies = [
 [[package]]
 name = "waitpid-any"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18aa3ce681e189f125c4c1e1388c03285e2fd434ef52c7203084012ac29c5e4a"
 dependencies = [
+ "libc",
  "rustix 1.1.4",
  "windows-sys 0.59.0",
 ]

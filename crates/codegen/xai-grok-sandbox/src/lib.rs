@@ -60,7 +60,7 @@ pub fn requires_hook_write_deny(profile: &ProfileName, workspace: &Path) -> bool
         _ => true,
     }
 }
-#[cfg(all(feature = "enforce", unix))]
+#[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
 use nono::Sandbox;
 use std::path::Path;
 #[cfg(any(target_os = "linux", test))]
@@ -175,7 +175,7 @@ impl SandboxManager {
     }
     /// Apply the sandbox to the current process. **Irreversible.**
     /// Degrades gracefully if the platform doesn't support it.
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     pub fn apply(&mut self, workspace: &Path) -> anyhow::Result<()> {
         if self.profile == ProfileName::Off {
             tracing::info!("Sandbox disabled (profile: off)");
@@ -236,12 +236,12 @@ impl SandboxManager {
             }
         }
     }
-    /// Stub when `enforce` feature is disabled — sandbox is not applied.
-    #[cfg(not(all(feature = "enforce", unix)))]
+    /// Stub when `enforce` feature is disabled or on Android — running in policy-only mode.
+    #[cfg(not(all(feature = "enforce", unix, not(target_os = "android"))))]
     pub fn apply(&mut self, _workspace: &Path) -> anyhow::Result<()> {
         tracing::info!(
             profile = %self.profile,
-            "Sandbox enforcement unavailable (built without 'enforce' feature)"
+            "Sandbox enforcement unavailable (running in policy-only mode)"
         );
         Ok(())
     }
@@ -259,7 +259,7 @@ impl SandboxManager {
         });
     }
     /// Check whether the current platform supports sandboxing.
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     pub fn support_info() -> nono::SupportInfo {
         Sandbox::support_info()
     }
@@ -430,7 +430,7 @@ fn is_devbox_based(profile: &ProfileName, config: &SandboxConfig) -> bool {
 /// failure. Keying "requires" on that empty-on-error result would silently
 /// downgrade to fail-open (Linux) when resolution hiccups; this intrinsic check
 /// stays fail-closed.
-#[cfg(all(feature = "enforce", unix))]
+#[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
 pub fn requires_read_deny(profile: &ProfileName, workspace: &Path) -> bool {
     match profile {
         ProfileName::Custom(name) => {
@@ -444,7 +444,7 @@ pub fn requires_read_deny(profile: &ProfileName, workspace: &Path) -> bool {
     }
 }
 /// Stub when `enforce` is unavailable — nothing is kernel-enforced.
-#[cfg(not(all(feature = "enforce", unix)))]
+#[cfg(not(all(feature = "enforce", unix, not(target_os = "android"))))]
 pub fn requires_read_deny(_profile: &ProfileName, _workspace: &Path) -> bool {
     false
 }
@@ -832,7 +832,7 @@ mod tests {
     }
     /// Create a temp workspace whose `.grok/sandbox.toml` contains `toml_body`.
     /// Returns the workspace path (caller removes it).
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     fn temp_workspace_with_sandbox_toml(tag: &str, toml_body: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -847,7 +847,7 @@ mod tests {
     /// Create a temp workspace defining a `denytest` profile (extends `workspace`)
     /// with the given `deny` list. `deny_toml` is the raw TOML array body
     /// (e.g. `"\".env\""`).
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     fn temp_workspace_with_deny(tag: &str, deny_toml: &str) -> PathBuf {
         temp_workspace_with_sandbox_toml(
             tag,
@@ -855,7 +855,7 @@ mod tests {
         )
     }
     #[test]
-    #[cfg(all(feature = "enforce", unix))]
+    #[cfg(all(feature = "enforce", unix, not(target_os = "android")))]
     fn requires_read_deny_only_for_custom_profile_with_deny() {
         let ws = temp_workspace_with_deny("requires-deny", "\".env\"");
         assert!(requires_read_deny(

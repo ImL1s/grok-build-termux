@@ -21,11 +21,17 @@ mod loader;
 mod macos_managed;
 mod managed_cache;
 pub mod managed_text;
-mod paths;
+pub mod paths;
+pub mod platform;
 pub mod shell;
 pub mod signed_policy;
 mod validation;
 pub mod version_overrides;
+
+pub use platform::{
+    EnvLookup, MockEnv, OsKind, PlatformCapabilities, PlatformError, PlatformKind, SandboxKind,
+    StorageSafetyError, SystemEnv, validate_storage_safety,
+};
 
 // Only the cross-crate campaign surface is re-exported at the root; the rest stays
 // reachable via the `pub mod` paths for in-crate use without widening the API.

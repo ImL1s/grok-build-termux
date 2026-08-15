@@ -43,7 +43,7 @@ pub use probe::{
 /// On Linux a `true` value means capture is *compiled in*; whether a recorder
 /// is actually installed is reported when a session starts. Consumers gate voice
 /// on this so a no-audio build never advertises a mic it can't open.
-pub const AUDIO_SUPPORTED: bool = cfg!(feature = "audio");
+pub const AUDIO_SUPPORTED: bool = cfg!(all(feature = "audio", not(target_os = "android")));
 
 /// Hidden subcommand consumers re-exec themselves with to capture microphone
 /// audio in a short-lived helper process (macOS; see
@@ -62,7 +62,7 @@ pub fn maybe_run_capture_subprocess() -> Option<i32> {
     if !is_capture_subcommand(&argv) {
         return None;
     }
-    #[cfg(all(feature = "audio", not(target_os = "linux")))]
+    #[cfg(all(feature = "audio", not(any(target_os = "linux", target_os = "android"))))]
     {
         // Skip argv[0] (binary) and argv[1] (subcommand); the rest are flags.
         let args: Vec<String> = argv
@@ -72,7 +72,7 @@ pub fn maybe_run_capture_subprocess() -> Option<i32> {
             .collect();
         Some(audio::run_capture_child_cli(args))
     }
-    #[cfg(not(all(feature = "audio", not(target_os = "linux"))))]
+    #[cfg(not(all(feature = "audio", not(any(target_os = "linux", target_os = "android")))))]
     {
         // Never spawned by this build's own parent backend (Linux uses system
         // recorders; no-audio builds have no capture). Reachable only by hand.

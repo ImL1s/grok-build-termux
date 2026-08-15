@@ -38,13 +38,9 @@ libc = { workspace = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.3"
 
-# arboard for clipboard on non-macOS platforms. On macOS we use pbcopy/pbpaste
-# subprocesses to avoid linking AppKit, which causes ~2 GB IOAccelerator GPU
-# memory overhead in headless processes (see clipboard.rs).
-# `wayland-data-control` makes arboard set the Wayland selection through the
-# compositor-side data-control protocol (no surface, no focus) instead of the
-# focus-mediated XWayland bridge; no-op off Linux (target-gated inside arboard).
-[target.'cfg(not(target_os = "macos"))'.dependencies]
+# arboard for clipboard on desktop non-macOS platforms.
+# Excluded on Android/Termux where Termux:API and OSC 52 are used.
+[target.'cfg(all(not(target_os = "macos"), not(target_os = "android")))'.dependencies]
 arboard = { workspace = true, features = ["wayland-data-control"] }
 
 # Already in-graph via arboard's wayland-data-control; direct dep for the

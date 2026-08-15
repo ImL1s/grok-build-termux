@@ -65,10 +65,11 @@ cryptify = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
-# Default allocator on Unix; gated by the `jemalloc` feature (see main.rs
-# `#[global_allocator]`, cfg(all(feature = "jemalloc", unix))).
-# `stats` is binary-scoped only (not workspace-wide) so this CLI jemalloc
-# link gets --enable-stats for stats.allocated / stats.resident mallctl.
+
+[target.'cfg(all(unix, not(target_os = "android")))'.dependencies]
+# Default allocator on desktop Unix; gated by the `jemalloc` feature (see main.rs
+# `#[global_allocator]`, cfg(all(feature = "jemalloc", unix, not(target_os = "android")))).
+# Excluded on Android/Termux to use Bionic's system allocator.
 tikv-jemallocator = { workspace = true, optional = true, features = ["stats"] }
 # Raw mallctl for the memory-cliff arena purge hook (see
 # `purge_jemalloc_retained_pages` + the `install_release_hook` call in

@@ -21,6 +21,8 @@ xai-grok-config = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+
+[target.'cfg(all(unix, not(target_os = "android")))'.dependencies]
 # Pinned exact: the macOS Seatbelt deny precedence (see deny.rs `emit_seatbelt_deny`)
 # depends on nono's observed rule-emission order. A bump can silently change it and
 # re-open the `mv x y && cat y` bypass with `is_applied()` still true, so re-verify
@@ -30,7 +32,7 @@ libc = { workspace = true }
 # table, so a `dep:nono` reference from the cross-platform `enforce` feature would
 # break feature resolution on non-unix targets (e.g. Windows builds). nono/globset
 # are unix-only here, so they only compile on unix anyway; the enforce *code*
-# stays gated on `cfg(all(feature = "enforce", unix))`.
+# stays gated on `cfg(all(feature = "enforce", unix, not(target_os = "android")))`.
 nono = { version = "=0.53.0", default-features = false }
 # globset validates every deny glob on BOTH platforms (so a glob is interpreted
 # identically or rejected identically) and matches them on Linux. Non-optional for
