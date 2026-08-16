@@ -395,10 +395,41 @@ async fn prompt_and_poll(
 /// where the URL is already rendered in the widget).
 async fn open_browser_detached(url: &str) -> bool {
     let url = url.to_owned();
-    match tokio::task::spawn_blocking(move || webbrowser::open(&url)).await {
-        Ok(Ok(())) => true,
-        Ok(Err(e)) => {
-            tracing::info!(error = %e, "device auth: could not open browser automatically");
+    match tokio::task::spawn_blocking(move || {
+        if webbrowser::open(&url).is_ok() {
+            return true;
+        }
+        #[cfg(target_os = "android")]
+        {
+            let mut cmd = std::process::Command::new("termux-open-url");
+            if cmd.arg(&url)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn().is_ok()
+            {
+                return true;
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            if xai_grok_config::platform::PlatformCapabilities::current().is_android_termux() {
+                let mut cmd = std::process::Command::new("termux-open-url");
+                if cmd.arg(&url)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn().is_ok()
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }).await {
+        Ok(true) => true,
+        Ok(false) => {
+            tracing::info!("device auth: could not open browser automatically");
             false
         }
         Err(e) => {

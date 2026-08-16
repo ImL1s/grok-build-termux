@@ -2779,7 +2779,6 @@ mod platform {
 #[cfg(target_os = "android")]
 mod platform {
     use super::{ClipboardAttachments, ImageData, NativeWriteOutcome, WaylandDataControlProbe};
-    use std::io::Write;
     use std::path::Path;
     use std::process::{Command, Stdio};
 
@@ -2809,24 +2808,38 @@ mod platform {
     pub(super) fn get_text() -> anyhow::Result<Option<String>> {
         let mut cmd = Command::new("termux-clipboard-get");
         xai_tty_utils::detach_std_command(&mut cmd);
-        let output = match cmd
-            .stdin(Stdio::null())
+        cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output()
-        {
-            Ok(out) => out,
+            .stderr(Stdio::null());
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
             Err(e) => {
-                tracing::debug!("termux-clipboard-get not found or failed: {e}");
+                tracing::debug!("termux-clipboard-get not found or failed to spawn: {e}");
                 return Ok(None);
             }
         };
-
-        if !output.status.success() {
+        let mut stdout = match child.stdout.take() {
+            Some(out) => out,
+            None => return Ok(None),
+        };
+        let reader = std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = Vec::new();
+            let _ = stdout.read_to_end(&mut buf);
+            buf
+        });
+        let status = match super::wait_with_deadline(&mut child, std::time::Duration::from_millis(750)) {
+            Ok(st) => st,
+            Err(e) => {
+                tracing::debug!("termux-clipboard-get timed out or failed: {e}");
+                return Ok(None);
+            }
+        };
+        let stdout_bytes = reader.join().unwrap_or_default();
+        if !status.success() {
             return Ok(None);
         }
-
-        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        let text = String::from_utf8_lossy(&stdout_bytes).to_string();
         if text.is_empty() {
             Ok(None)
         } else {
@@ -2846,23 +2859,20 @@ mod platform {
         };
 
         let mut success = false;
-        let mut cmd = Command::new("termux-clipboard-set");
-        xai_tty_utils::detach_std_command(&mut cmd);
-        if let Ok(mut child) = cmd
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(text.as_bytes());
-            }
-            if let Ok(status) = child.wait() {
-                if status.success() {
-                    outcome.cli_ok_tools.push("termux-clipboard-set");
-                    outcome.cli_ok = true;
-                    outcome.any_ok = true;
-                    success = true;
+        if let Ok(stdin_file) = super::spool_for_stdin(text.as_bytes()) {
+            let mut cmd = Command::new("termux-clipboard-set");
+            xai_tty_utils::detach_std_command(&mut cmd);
+            cmd.stdin(Stdio::from(stdin_file))
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            if let Ok(mut child) = cmd.spawn() {
+                if let Ok(status) = super::wait_with_deadline(&mut child, std::time::Duration::from_millis(750)) {
+                    if status.success() {
+                        outcome.cli_ok_tools.push("termux-clipboard-set");
+                        outcome.cli_ok = true;
+                        outcome.any_ok = true;
+                        success = true;
+                    }
                 }
             }
         }

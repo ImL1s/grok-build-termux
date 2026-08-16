@@ -77,6 +77,7 @@ fn reinstall_hint(installer: &str, channel: &str) -> String {
     match installer {
         "npm" => "Please reinstall via npm:\n  npm i -g @xai-official/grok".to_string(),
         "gh-release" => "Please reinstall via GitHub Releases:\n  gh release download --repo xai-org-shared/grok-build --pattern 'grok-*' --output grok && chmod +x grok".to_string(),
+        "package-managed" => "Please update via Termux package manager:\n  pkg update && pkg upgrade grok-build".to_string(),
         _ => format!("Please reinstall via:\n  {}", manual_install_cmd(channel)),
     }
 }
@@ -187,6 +188,12 @@ pub struct UpdateStatus {
     pub channel: String,
     pub auto_update: Option<bool>,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub can_auto_download: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// Format and print an [`UpdateStatus`] to stdout.
@@ -194,6 +201,15 @@ pub fn print_update_status(status: &UpdateStatus, json: bool) -> anyhow::Result<
     if json {
         let payload = serde_json::to_string(status)?;
         println!("{payload}");
+        return Ok(());
+    }
+
+    if status.installer.as_deref() == Some("package-managed") {
+        if let Some(ref msg) = status.message {
+            println!("{msg}");
+        } else {
+            println!("Grok Build was installed via Termux package manager. To update, run: pkg update && pkg upgrade grok-build");
+        }
         return Ok(());
     }
 
@@ -248,8 +264,28 @@ pub async fn check_update_status(update_config: &UpdateConfig) -> UpdateStatus {
             channel,
             auto_update,
             error: None,
+            action: None,
+            can_auto_download: None,
+            message: None,
         };
     };
+
+    if inst == "package-managed" {
+        return UpdateStatus {
+            current_version,
+            latest_version: None,
+            update_available: false,
+            installer,
+            channel,
+            auto_update: Some(false),
+            error: None,
+            action: Some("delegate_to_pkg".to_string()),
+            can_auto_download: Some(false),
+            message: Some(
+                "Grok Build was installed via Termux package manager. To update, run: pkg update && pkg upgrade grok-build".to_string(),
+            ),
+        };
+    }
 
     match get_latest_version(inst, update_config).await {
         // --check shares the updater's decision, so it never advertises a version
@@ -289,6 +325,9 @@ pub async fn check_update_status(update_config: &UpdateConfig) -> UpdateStatus {
                     channel,
                     auto_update,
                     error,
+                    action: None,
+                    can_auto_download: None,
+                    message: None,
                 }
             }
             // Policy skips (anti-downgrade) or can't satisfy the floor: no upgrade.
@@ -300,6 +339,9 @@ pub async fn check_update_status(update_config: &UpdateConfig) -> UpdateStatus {
                 channel,
                 auto_update,
                 error: None,
+                action: None,
+                can_auto_download: None,
+                message: None,
             },
         },
         Err(err) => UpdateStatus {
@@ -310,6 +352,9 @@ pub async fn check_update_status(update_config: &UpdateConfig) -> UpdateStatus {
             channel,
             auto_update,
             error: Some(err.to_string()),
+            action: None,
+            can_auto_download: None,
+            message: None,
         },
     }
 }
@@ -486,10 +531,21 @@ fn env_installer() -> Option<&'static str> {
     if let Ok(v) = std::env::var("GROK_INSTALLER") {
         return match v.to_ascii_lowercase().as_str() {
             "npm" => Some("npm"),
-            "internal" => Some("internal"),
+            "internal" | "standalone" => Some("internal"),
             "gh-release" | "gh" => Some("gh-release"),
+            "pkg" | "package-managed" | "apt" | "deb" => Some("package-managed"),
             _ => None,
         };
+    }
+    if let Ok(v) = std::env::var("GROK_INSTALL_MODE") {
+        return match v.to_ascii_lowercase().as_str() {
+            "pkg" | "package-managed" | "apt" | "deb" => Some("package-managed"),
+            "standalone" | "internal" => Some("internal"),
+            _ => None,
+        };
+    }
+    if std::env::var_os("GROK_MANAGED_BY_PKG").is_some() {
+        return Some("package-managed");
     }
     if std::env::var_os("GROK_MANAGED_BY_NPM").is_some() {
         return Some("npm");
@@ -508,11 +564,31 @@ pub async fn get_installer() -> Option<&'static str> {
         return Some(i);
     }
     let cfg = config::load_config().await;
-    match cfg.cli.installer.as_deref() {
-        Some("npm") => Some("npm"),
-        Some("gh-release") => Some("gh-release"),
-        _ => Some("internal"),
+    if let Some(ref inst) = cfg.cli.installer {
+        return match inst.as_str() {
+            "npm" => Some("npm"),
+            "gh-release" => Some("gh-release"),
+            "pkg" | "package-managed" | "apt" => Some("package-managed"),
+            "standalone" | "internal" => Some("internal"),
+            _ => Some("internal"),
+        };
     }
+
+    // Check if current_exe is located in Termux $PREFIX/bin or system prefix directory
+    let caps = xai_grok_config::PlatformCapabilities::current();
+    if caps.is_android_termux() {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Ok(pfx) = caps.prefix_dir() {
+                if exe.starts_with(pfx) {
+                    let home = caps.home_dir().unwrap_or_default();
+                    if !exe.starts_with(home) {
+                        return Some("package-managed");
+                    }
+                }
+            }
+        }
+    }
+    Some("internal")
 }
 
 fn needs_update(current: &str, target: &str, channel: &str, allow_downgrade: bool) -> Option<bool> {
@@ -601,6 +677,10 @@ pub async fn check_update_background(update_config: &UpdateConfig) -> Background
     let Some(installer) = get_installer().await else {
         return BackgroundUpdateCheck::none();
     };
+
+    if installer == "package-managed" {
+        return BackgroundUpdateCheck::none();
+    }
 
     heal_managed_install(installer).await;
 
@@ -991,7 +1071,10 @@ pub async fn run_install_script(
 /// install.sh's `hw.optional.arm64` probe; without it, a lingering x86_64
 /// process would reinstall x86_64 right over a fresh native install.
 pub(crate) fn detect_platform() -> Result<(&'static str, &'static str)> {
-    let os = if cfg!(target_os = "macos") {
+    let caps = xai_grok_config::PlatformCapabilities::current();
+    let os = if caps.is_android_termux() || cfg!(target_os = "android") {
+        "termux"
+    } else if cfg!(target_os = "macos") {
         "macos"
     } else if cfg!(target_os = "linux") {
         "linux"
@@ -1551,6 +1634,71 @@ struct VerifiedDownload {
     binary_path: std::path::PathBuf,
 }
 
+/// Validates that a downloaded binary conforms to ELF requirements on Android / Linux:
+/// - Valid ELF magic header
+/// - Correct Bionic dynamic linker (/system/bin/linker64 or /system/bin/linker) on Android
+/// - Rejection of desktop glibc dynamic linkers (ld-linux-*.so) on Android
+/// - 16 KiB page size alignment (p_align >= 0x4000) for all PT_LOAD segments on Android
+pub fn validate_binary_elf(path: &std::path::Path) -> Result<()> {
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("failed to read binary for ELF validation: {}", path.display()))?;
+    if bytes.len() < 4 || &bytes[0..4] != b"\x7fELF" {
+        // Not an ELF binary (e.g. Mach-O on macOS, PE on Windows, or mock script)
+        return Ok(());
+    }
+    if bytes.len() < 64 {
+        anyhow::bail!("Binary is too small to be a valid ELF executable");
+    }
+
+    let is_64 = bytes[4] == 2;
+    let is_le = bytes[5] == 1;
+    if !is_le {
+        anyhow::bail!("Unsupported big-endian ELF binary");
+    }
+
+    let caps = xai_grok_config::PlatformCapabilities::current();
+    let is_android = caps.is_android() || cfg!(target_os = "android");
+
+    if is_64 && bytes.len() >= 64 {
+        let phoff = u64::from_le_bytes(bytes[32..40].try_into().unwrap_or_default()) as usize;
+        let phentsize = u16::from_le_bytes(bytes[54..56].try_into().unwrap_or_default()) as usize;
+        let phnum = u16::from_le_bytes(bytes[56..58].try_into().unwrap_or_default()) as usize;
+
+        for i in 0..phnum {
+            let offset = phoff + i * phentsize;
+            if offset + phentsize <= bytes.len() {
+                let p_type = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap_or_default());
+                // PT_INTERP = 3
+                if p_type == 3 {
+                    let p_offset = u64::from_le_bytes(bytes[offset + 8..offset + 16].try_into().unwrap_or_default()) as usize;
+                    let p_filesz = u64::from_le_bytes(bytes[offset + 32..offset + 40].try_into().unwrap_or_default()) as usize;
+                    if p_offset + p_filesz <= bytes.len() {
+                        let interp_bytes = &bytes[p_offset..p_offset + p_filesz];
+                        let interp_str = String::from_utf8_lossy(interp_bytes).trim_matches('\0').to_string();
+                        if is_android {
+                            if interp_str.contains("ld-linux") || interp_str.starts_with("/lib") {
+                                anyhow::bail!(
+                                    "Incompatible desktop Linux dynamic linker in binary: {interp_str}. Expected Android Bionic linker (/system/bin/linker64)"
+                                );
+                            }
+                        }
+                    }
+                }
+                // PT_LOAD = 1
+                if p_type == 1 && is_android {
+                    let p_align = u64::from_le_bytes(bytes[offset + 48..offset + 56].try_into().unwrap_or_default());
+                    if p_align < 16384 {
+                        anyhow::bail!(
+                            "ELF PT_LOAD segment alignment {p_align} is less than required 16 KiB (16384) for Android 15+ readiness"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Base-dependent install phase: resolve the version (per base when no
 /// target is pinned), download the binary, and smoke-test it. Network /
 /// fetch failures here are worth retrying against another base URL.
@@ -1586,6 +1734,12 @@ async fn download_verified_from_base(
 
     // Published already +x (see `publish_downloaded_artifact`).
     download_cli_artifact_from_gcs(gcs_base_url, &binary_name, &binary_path, true).await?;
+
+    // ELF header & 16 KiB alignment validation before smoke test & activation
+    if let Err(err) = validate_binary_elf(&binary_path) {
+        let _ = tokio::fs::remove_file(&binary_path).await;
+        return Err(anyhow::anyhow!("ELF validation failed: {err}"));
+    }
 
     // Smoke-test: run the binary before activating it. A truncated or
     // corrupt download is caught here and never becomes the active grok.
@@ -2420,6 +2574,12 @@ async fn install_gh_release(target: Option<&str>) -> Result<()> {
         tokio::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755)).await?;
     }
 
+    // ELF header & 16 KiB alignment validation before activation
+    if let Err(err) = validate_binary_elf(&binary_path) {
+        let _ = tokio::fs::remove_file(&binary_path).await;
+        return Err(anyhow::anyhow!("ELF validation failed: {err}"));
+    }
+
     // Atomic swap of ~/.grok/bin/{grok,agent} -> downloaded binary.
     swap_managed_bin_links(&binary_path, &bin_dir).await?;
 
@@ -2652,6 +2812,10 @@ pub async fn run_update(
             return Ok(None);
         }
     };
+    if installer == "package-managed" {
+        println!("Grok Build was installed via Termux package manager. To update, run: pkg update && pkg upgrade grok-build");
+        return Ok(None);
+    }
     // Persist installer if not already saved
     let cfg = config::load_config().await;
     if cfg.cli.installer.is_none() {

@@ -65,6 +65,21 @@ pub(super) fn format(report: &DiagnosticReport) -> String {
         fact(&mut out, "newline", &format_newline(newline));
     }
 
+    if let Some(ref plat) = facts.platform {
+        fact(&mut out, "platform", plat.platform_name);
+        if let Some(ref pfx) = plat.prefix_path {
+            fact(&mut out, "prefix", &format!("{} ({})", pfx.display(), if plat.prefix_valid { "valid" } else { "invalid" }));
+        }
+        if let Some(ref home) = plat.home_path {
+            fact(&mut out, "storage", &format!("{} ({})", home.display(), if plat.storage_safe { "private, safe" } else { "shared, unsafe" }));
+        }
+        if let Some(ref linker) = plat.bionic_linker {
+            fact(&mut out, "bionic linker", &format!("{} (Bionic libc)", linker.display()));
+        }
+        fact(&mut out, "page size", &format!("{} KiB ({})", plat.page_size / 1024, if plat.is_16k_page_compatible { "16 KiB compatible" } else { "4 KiB alignment only" }));
+        fact(&mut out, "sandbox", plat.sandbox_kind.as_str());
+    }
+
     let clipboard = &facts.clipboard;
     let native = match clipboard.native_preflight {
         NativeClipboardPreflight::LocalAvailable => {
@@ -134,6 +149,21 @@ pub(super) fn format(report: &DiagnosticReport) -> String {
             }
             VoiceFacts::Missing { error } => {
                 fact(&mut out, "microphone", &format!("none detected ({error})"));
+            }
+        }
+    }
+
+    if let Some(ref tools) = facts.tools {
+        out.push_str("\nCLI Tools\n");
+        for tool in tools {
+            if tool.installed {
+                let ver_str = tool.version.as_deref().unwrap_or("installed");
+                let path_str = tool.path.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+                fact(&mut out, tool.name, &format!("{path_str} ({ver_str})"));
+            } else if tool.optional {
+                fact(&mut out, &format!("{} (optional)", tool.name), &format!("not found ({})", tool.remediation));
+            } else {
+                fact(&mut out, tool.name, &format!("missing ({})", tool.remediation));
             }
         }
     }

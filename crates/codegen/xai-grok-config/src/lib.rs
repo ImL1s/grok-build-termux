@@ -29,8 +29,8 @@ mod validation;
 pub mod version_overrides;
 
 pub use platform::{
-    EnvLookup, MockEnv, OsKind, PlatformCapabilities, PlatformError, PlatformKind, SandboxKind,
-    StorageSafetyError, SystemEnv, validate_storage_safety,
+    EnvLookup, MockEnv, OsKind, PlatformCapabilities, PlatformDiagnosticsFacts, PlatformError,
+    PlatformKind, SandboxKind, StorageSafetyError, SystemEnv, validate_storage_safety,
 };
 
 // Only the cross-crate campaign surface is re-exported at the root; the rest stays

@@ -31,7 +31,8 @@ impl PlatformKind {
 }
 
 /// Truthful sandbox classification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum SandboxKind {
     /// Kernel-enforced sandbox via OS primitives (Landlock on Linux, Seatbelt on macOS).
     KernelEnforced,
@@ -382,6 +383,100 @@ impl PlatformCapabilities {
     pub fn has_audio_capture(&self) -> bool {
         self.has_audio
     }
+
+    pub fn diagnose_platform(&self) -> PlatformDiagnosticsFacts {
+        let is_termux = self.is_android_termux();
+        let prefix = self.prefix_dir().ok().map(|p| p.to_path_buf());
+        let prefix_valid = prefix.as_ref().map(|p| p.is_dir()).unwrap_or(false);
+        let home = self.home_dir().ok();
+        let storage_safe = home.as_ref().map(|p| validate_storage_safety(p).is_ok()).unwrap_or(false);
+
+        #[cfg(unix)]
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize };
+        #[cfg(not(unix))]
+        let page_size = 4096;
+
+        let is_16k_page_compatible = page_size >= 16384 || self.verify_self_elf_alignment();
+
+        let bionic_linker = if self.is_android() {
+            if Path::new("/system/bin/linker64").exists() {
+                Some(PathBuf::from("/system/bin/linker64"))
+            } else if Path::new("/system/bin/linker").exists() {
+                Some(PathBuf::from("/system/bin/linker"))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        PlatformDiagnosticsFacts {
+            platform_name: if is_termux {
+                "Android/Termux"
+            } else if cfg!(target_os = "macos") {
+                "macOS"
+            } else if cfg!(target_os = "windows") {
+                "Windows"
+            } else {
+                "Desktop Linux"
+            },
+            is_android_termux: is_termux,
+            prefix_path: prefix,
+            prefix_valid,
+            home_path: home,
+            storage_safe,
+            sandbox_kind: self.sandbox_kind(),
+            arch: std::env::consts::ARCH,
+            page_size,
+            is_16k_page_compatible,
+            bionic_linker,
+            termux_version: std::env::var("TERMUX_VERSION").ok(),
+        }
+    }
+
+    pub fn verify_self_elf_alignment(&self) -> bool {
+        if let Ok(exe_bytes) = std::fs::read("/proc/self/exe") {
+            if exe_bytes.len() >= 64 && &exe_bytes[0..4] == b"\x7fELF" {
+                let is_64 = exe_bytes[4] == 2;
+                if is_64 {
+                    let phoff = u64::from_le_bytes(exe_bytes[32..40].try_into().unwrap_or_default()) as usize;
+                    let phentsize = u16::from_le_bytes(exe_bytes[54..56].try_into().unwrap_or_default()) as usize;
+                    let phnum = u16::from_le_bytes(exe_bytes[56..58].try_into().unwrap_or_default()) as usize;
+                    for i in 0..phnum {
+                        let offset = phoff + i * phentsize;
+                        if offset + phentsize <= exe_bytes.len() {
+                            let p_type = u32::from_le_bytes(exe_bytes[offset..offset+4].try_into().unwrap_or_default());
+                            if p_type == 1 /* PT_LOAD */ {
+                                let p_align = u64::from_le_bytes(exe_bytes[offset+48..offset+56].try_into().unwrap_or_default());
+                                if p_align < 16384 {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        true
+    }
+}
+
+/// Diagnostic facts about the host platform environment.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PlatformDiagnosticsFacts {
+    pub platform_name: &'static str,
+    pub is_android_termux: bool,
+    pub prefix_path: Option<PathBuf>,
+    pub prefix_valid: bool,
+    pub home_path: Option<PathBuf>,
+    pub storage_safe: bool,
+    pub sandbox_kind: SandboxKind,
+    pub arch: &'static str,
+    pub page_size: usize,
+    pub is_16k_page_compatible: bool,
+    pub bionic_linker: Option<PathBuf>,
+    pub termux_version: Option<String>,
 }
 
 /// Known Android shared storage path prefixes and subsegments that lack POSIX DAC permissions.

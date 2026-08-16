@@ -97,6 +97,8 @@ pub struct DiagnosticFacts {
     /// Passive mic enumeration when voice capture is available. `None` omits the
     /// Voice section (no-audio builds, or TUI when voice mode is off).
     pub voice: Option<VoiceFacts>,
+    pub platform: Option<xai_grok_config::PlatformDiagnosticsFacts>,
+    pub tools: Option<Vec<xai_grok_tools::resolver::ToolDiagnosticStatus>>,
 }
 
 /// Result of a passive input-device lookup (does not open a capture stream).

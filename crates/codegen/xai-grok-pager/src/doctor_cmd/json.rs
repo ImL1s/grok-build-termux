@@ -30,6 +30,37 @@ struct JsonReport<'a> {
     counts: JsonCounts,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonToolStatus<'a> {
+    installed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    optional: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remediation: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonPlatformFacts<'a> {
+    platform_name: &'a str,
+    is_android_termux: bool,
+    prefix_path: Option<String>,
+    prefix_valid: bool,
+    home_path: Option<String>,
+    storage_safe: bool,
+    sandbox_kind: &'static str,
+    arch: &'a str,
+    page_size: usize,
+    is16k_page_compatible: bool,
+    bionic_linker: Option<String>,
+    termux_version: Option<String>,
+}
+
 impl<'a> From<&'a DiagnosticReport> for JsonReport<'a> {
     fn from(report: &'a DiagnosticReport) -> Self {
         Self {
@@ -58,11 +89,42 @@ struct JsonFacts<'a> {
     clipboard: JsonClipboardFacts<'a>,
     #[serde(skip_serializing_if = "Option::is_none")]
     voice: Option<JsonVoiceFacts<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    platform: Option<JsonPlatformFacts<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<std::collections::BTreeMap<&'a str, JsonToolStatus<'a>>>,
 }
 
 impl<'a> From<&'a DiagnosticReport> for JsonFacts<'a> {
     fn from(report: &'a DiagnosticReport) -> Self {
         let facts = &report.facts;
+        let platform = facts.platform.as_ref().map(|p| JsonPlatformFacts {
+            platform_name: p.platform_name,
+            is_android_termux: p.is_android_termux,
+            prefix_path: p.prefix_path.as_ref().map(|path| path.to_string_lossy().into_owned()),
+            prefix_valid: p.prefix_valid,
+            home_path: p.home_path.as_ref().map(|path| path.to_string_lossy().into_owned()),
+            storage_safe: p.storage_safe,
+            sandbox_kind: p.sandbox_kind.as_str(),
+            arch: p.arch,
+            page_size: p.page_size,
+            is16k_page_compatible: p.is_16k_page_compatible,
+            bionic_linker: p.bionic_linker.as_ref().map(|path| path.to_string_lossy().into_owned()),
+            termux_version: p.termux_version.clone(),
+        });
+        let tools = facts.tools.as_ref().map(|ts| {
+            let mut map = std::collections::BTreeMap::new();
+            for tool in ts {
+                map.insert(tool.name, JsonToolStatus {
+                    installed: tool.installed,
+                    path: tool.path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                    version: tool.version.as_deref(),
+                    optional: if tool.optional { Some(true) } else { None },
+                    remediation: Some(&tool.remediation),
+                });
+            }
+            map
+        });
         Self {
             terminal: JsonTerminalFact {
                 name: terminal_name(facts.terminal),
@@ -91,6 +153,8 @@ impl<'a> From<&'a DiagnosticReport> for JsonFacts<'a> {
             newline: facts.newline.as_ref().map(JsonNewlineFact::from),
             clipboard: JsonClipboardFacts::from(&facts.clipboard),
             voice: facts.voice.as_ref().map(JsonVoiceFacts::from),
+            platform,
+            tools,
         }
     }
 }

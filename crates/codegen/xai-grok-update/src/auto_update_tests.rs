@@ -1169,6 +1169,9 @@ fn make_status() -> UpdateStatus {
         channel: "stable".to_string(),
         auto_update: Some(true),
         error: None,
+        action: None,
+        can_auto_download: None,
+        message: None,
     }
 }
 
@@ -1214,6 +1217,9 @@ fn test_update_status_optional_none_serializes_to_null() {
         channel: "stable".to_string(),
         auto_update: None,
         error: None,
+        action: None,
+        can_auto_download: None,
+        message: None,
     };
     let v = serde_json::to_value(&s).unwrap();
     assert!(v["latestVersion"].is_null());
@@ -1233,6 +1239,9 @@ fn test_update_status_with_error_field_serialized() {
         channel: "stable".to_string(),
         auto_update: Some(true),
         error: Some("npm view failed: ENETUNREACH".to_string()),
+        action: None,
+        can_auto_download: None,
+        message: None,
     };
     let v = serde_json::to_value(&s).unwrap();
     assert_eq!(v["error"], "npm view failed: ENETUNREACH");
@@ -1248,6 +1257,9 @@ fn test_update_status_alpha_channel_serialized() {
         channel: "alpha".to_string(),
         auto_update: Some(true),
         error: None,
+        action: None,
+        can_auto_download: None,
+        message: None,
     };
     let v = serde_json::to_value(&s).unwrap();
     assert_eq!(v["channel"], "alpha");
@@ -1297,6 +1309,9 @@ fn test_print_update_status_human_returns_ok_when_no_installer() {
         channel: "stable".to_string(),
         auto_update: None,
         error: None,
+        action: None,
+        can_auto_download: None,
+        message: None,
     };
     print_update_status(&s, false).unwrap();
 }
@@ -1311,6 +1326,9 @@ fn test_print_update_status_human_returns_ok_with_error() {
         channel: "stable".to_string(),
         auto_update: Some(true),
         error: Some("network down".to_string()),
+        action: None,
+        can_auto_download: None,
+        message: None,
     };
     print_update_status(&s, false).unwrap();
 }
@@ -1325,6 +1343,9 @@ fn test_print_update_status_human_returns_ok_when_up_to_date() {
         channel: "stable".to_string(),
         auto_update: Some(true),
         error: None,
+        action: None,
+        can_auto_download: None,
+        message: None,
     };
     print_update_status(&s, false).unwrap();
 }
@@ -1594,30 +1615,31 @@ fn test_installer_allows_downgrade_unknown_blocked() {
 // detect_platform
 // ──────────────────────────────────────────────────────────────────────
 
-#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows", target_os = "android"))]
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn test_detect_platform_returns_known_os() {
     let (os, arch) = detect_platform().unwrap();
     assert!(
-        os == "macos" || os == "linux" || os == "windows",
+        os == "macos" || os == "linux" || os == "windows" || os == "termux",
         "got os={os}"
     );
     assert!(arch == "x86_64" || arch == "aarch64", "got arch={arch}");
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows", target_os = "android"))]
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn test_detect_platform_matches_compile_time_cfg() {
     let (os, arch) = detect_platform().unwrap();
-    if cfg!(target_os = "macos") {
+    let is_termux = xai_grok_config::PlatformCapabilities::current().is_android_termux() || cfg!(target_os = "android");
+    if is_termux {
+        assert_eq!(os, "termux");
+    } else if cfg!(target_os = "macos") {
         assert_eq!(os, "macos");
-    }
-    if cfg!(target_os = "linux") {
+    } else if cfg!(target_os = "linux") {
         assert_eq!(os, "linux");
-    }
-    if cfg!(target_os = "windows") {
+    } else if cfg!(target_os = "windows") {
         assert_eq!(os, "windows");
     }
     if cfg!(target_arch = "x86_64") {
@@ -1631,6 +1653,52 @@ fn test_detect_platform_matches_compile_time_cfg() {
     }
     if cfg!(target_arch = "aarch64") {
         assert_eq!(arch, "aarch64");
+    }
+}
+
+#[test]
+fn test_env_installer_package_managed_detection() {
+    unsafe {
+        std::env::set_var("GROK_INSTALLER", "pkg");
+    }
+    assert_eq!(env_installer(), Some("package-managed"));
+
+    unsafe {
+        std::env::set_var("GROK_INSTALLER", "package-managed");
+    }
+    assert_eq!(env_installer(), Some("package-managed"));
+
+    unsafe {
+        std::env::remove_var("GROK_INSTALLER");
+        std::env::set_var("GROK_INSTALL_MODE", "deb");
+    }
+    assert_eq!(env_installer(), Some("package-managed"));
+
+    unsafe {
+        std::env::remove_var("GROK_INSTALL_MODE");
+    }
+}
+
+#[tokio::test]
+async fn test_check_update_status_package_managed() {
+    unsafe {
+        std::env::set_var("GROK_INSTALLER", "pkg");
+    }
+    let config = UpdateConfig {
+        proxy_base_url: "https://cli-chat-proxy.grok.com/v1".to_string(),
+        auth_scope: "grok".to_string(),
+        deployment_key: None,
+        alpha_test_key: None,
+        channel: "stable".to_string(),
+        npm_registry: None,
+    };
+    let status = check_update_status(&config).await;
+    assert_eq!(status.installer.as_deref(), Some("package-managed"));
+    assert_eq!(status.action.as_deref(), Some("delegate_to_pkg"));
+    assert_eq!(status.can_auto_download, Some(false));
+    assert!(status.message.as_ref().unwrap().contains("pkg update && pkg upgrade grok-build"));
+    unsafe {
+        std::env::remove_var("GROK_INSTALLER");
     }
 }
 

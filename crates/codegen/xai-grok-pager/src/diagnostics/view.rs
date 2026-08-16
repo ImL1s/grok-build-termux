@@ -127,6 +127,57 @@ pub fn view(snapshot: DiagnosticSnapshot<'_>) -> DiagnosticReport {
         .and_then(recommendation),
     );
 
+    let caps = xai_grok_config::PlatformCapabilities::current();
+    let platform_facts = caps.diagnose_platform();
+    let tool_statuses = xai_grok_tools::resolver::ToolResolver::diagnose_all_tools();
+
+    // Check 1: Termux $PREFIX Check
+    if caps.is_android() && !platform_facts.prefix_valid {
+        findings.push(DiagnosticFinding {
+            id: DiagnosticId::new("platform", "invalid-prefix"),
+            disposition: FindingDisposition::Issue,
+            message: "Termux $PREFIX is unset or missing required directories.".to_string(),
+            remediation: Some(ManualRemediation {
+                fix: "Launch Grok inside Termux, or set PREFIX=/data/data/com.termux/files/usr".to_string(),
+                config_path: None,
+            }),
+            automatic_remediation: None,
+            note: None,
+        });
+    }
+
+    // Check 4: Essential CLI Tools Check
+    for tool in &tool_statuses {
+        if !tool.installed && !tool.optional {
+            findings.push(DiagnosticFinding {
+                id: DiagnosticId::new("tools", tool.name),
+                disposition: FindingDisposition::Issue,
+                message: format!("Missing required tool: {}", tool.name),
+                remediation: Some(ManualRemediation {
+                    fix: tool.remediation.clone(),
+                    config_path: None,
+                }),
+                automatic_remediation: None,
+                note: None,
+            });
+        }
+    }
+
+    // Check 6: Storage Quarantine Guard
+    if !platform_facts.storage_safe {
+        findings.push(DiagnosticFinding {
+            id: DiagnosticId::new("storage", "quarantine-violation"),
+            disposition: FindingDisposition::Issue,
+            message: "GROK_HOME cannot reside on Android shared storage (/sdcard).".to_string(),
+            remediation: Some(ManualRemediation {
+                fix: "Unset GROK_HOME or point it to $HOME/.grok on private storage.".to_string(),
+                config_path: None,
+            }),
+            automatic_remediation: None,
+            note: Some("Android shared storage lacks POSIX permissions (0700) and is world-readable.".to_string()),
+        });
+    }
+
     DiagnosticReport {
         facts,
         findings,
@@ -248,6 +299,8 @@ fn facts(
             newline,
             clipboard,
             voice: None,
+            platform: Some(xai_grok_config::PlatformCapabilities::current().diagnose_platform()),
+            tools: Some(xai_grok_tools::resolver::ToolResolver::diagnose_all_tools()),
         },
         clipboard_recovery,
     )

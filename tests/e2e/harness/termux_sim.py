@@ -128,7 +128,8 @@ class PlatformCapabilities:
         self.env = env
 
     def is_android_termux(self) -> bool:
-        return self.env.is_android and bool(os.environ.get("PREFIX"))
+        prefix = os.environ.get("PREFIX", "").strip()
+        return self.env.is_android and bool(prefix)
 
     def prefix_dir(self) -> str:
         prefix = os.environ.get("PREFIX")
@@ -140,8 +141,10 @@ class PlatformCapabilities:
 
     def system_config_dir(self) -> Optional[str]:
         if self.is_android_termux():
-            prefix = os.environ.get("PREFIX")
+            prefix = os.environ.get("PREFIX", "").strip()
             return os.path.join(prefix, "etc/grok") if prefix else None
+        if self.env.is_android:
+            return None
         return "/etc/grok"
 
     def home_dir(self) -> str:

@@ -27,7 +27,12 @@ pub enum OpenUrlResult {
 /// are treated as available at the env level (spawn failure is still
 /// reported by [`open_url`]).
 pub fn browser_open_likely_available_from_env(env: &HashMap<String, String>) -> bool {
-    if cfg!(any(target_os = "macos", target_os = "windows")) {
+    if cfg!(any(target_os = "macos", target_os = "windows", target_os = "android")) {
+        return true;
+    }
+    if xai_grok_config::platform::PlatformCapabilities::current().is_android_termux()
+        || env.get("PREFIX").is_some_and(|v| !v.is_empty())
+    {
         return true;
     }
     // Explicit BROWSER override: allow even without a display server so
@@ -109,8 +114,14 @@ pub fn open_url(url: &str) -> bool {
     let cmd = "open";
     #[cfg(target_os = "windows")]
     let cmd = "cmd";
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let cmd = "xdg-open";
+    #[cfg(target_os = "android")]
+    let cmd = "termux-open-url";
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "android")))]
+    let cmd = if xai_grok_config::platform::PlatformCapabilities::current().is_android_termux() {
+        "termux-open-url"
+    } else {
+        "xdg-open"
+    };
 
     let mut command = std::process::Command::new(cmd);
     #[cfg(target_os = "windows")]
@@ -150,8 +161,14 @@ pub fn open_url(url: &str) -> bool {
 fn build_open_path_command(path: &std::path::Path) -> std::process::Command {
     #[cfg(target_os = "macos")]
     let mut command = std::process::Command::new("open");
-    #[cfg(not(target_os = "macos"))]
-    let mut command = std::process::Command::new("xdg-open");
+    #[cfg(target_os = "android")]
+    let mut command = std::process::Command::new("termux-open");
+    #[cfg(not(any(target_os = "macos", target_os = "android")))]
+    let mut command = if xai_grok_config::platform::PlatformCapabilities::current().is_android_termux() {
+        std::process::Command::new("termux-open")
+    } else {
+        std::process::Command::new("xdg-open")
+    };
     command
         .arg(path)
         .stdin(std::process::Stdio::null())
@@ -569,9 +586,21 @@ mod tests {
     }
 
     #[test]
+    fn browser_available_with_termux_prefix() {
+        assert!(browser_open_likely_available_from_env(&env(&[(
+            "PREFIX",
+            "/data/data/com.termux/files/usr"
+        )])));
+    }
+
+    #[test]
     fn browser_unavailable_when_display_vars_empty_or_missing() {
-        if cfg!(any(target_os = "macos", target_os = "windows")) {
-            // Desktop OSes do not gate on DISPLAY.
+        if cfg!(any(target_os = "macos", target_os = "windows", target_os = "android")) {
+            // Desktop OSes & Android do not gate on DISPLAY.
+            assert!(browser_open_likely_available_from_env(&env(&[])));
+            return;
+        }
+        if xai_grok_config::platform::PlatformCapabilities::current().is_android_termux() {
             assert!(browser_open_likely_available_from_env(&env(&[])));
             return;
         }

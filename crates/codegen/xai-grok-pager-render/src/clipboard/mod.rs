@@ -168,7 +168,7 @@ fn resolve_clipboard_route_with(ctx: &TerminalContext, opts: ClipboardRouteOpts)
     // the sequence to the real clipboard.
     // `GROK_CLIPBOARD_NO_OSC52` wins over every automatic path.
     let osc52 = !opts.no_osc52
-        && (cfg!(target_os = "linux")
+        && (cfg!(any(target_os = "linux", target_os = "android"))
             || is_tmux
             || is_remote()
             || is_container_no_display()

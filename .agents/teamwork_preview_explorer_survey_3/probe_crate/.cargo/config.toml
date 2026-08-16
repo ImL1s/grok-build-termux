@@ -1,0 +1,4 @@
+[target.aarch64-linux-android]
+linker = "/Users/iml1s/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android24-clang"
+ar = "/Users/iml1s/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]

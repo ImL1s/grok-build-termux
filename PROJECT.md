@@ -66,10 +66,10 @@ The native Android/Termux port of Grok Build (`grok-build-termux`) targets `aarc
 | M1 | Platform Capability & Dependency Isolation | Features 1–5: PlatformCapabilities, dynamic $PREFIX, allocator gating, desktop clipboard gating, voice gating | none | DONE |
 | M2 | Native Bionic Build & Toolchain Alignment | Features 6–9: .cargo/config.toml, 16 KiB ELF alignment, build.rs tool download bypass, native CLI tool resolution | M1 | DONE |
 | M3 | Filesystem Safety & Storage Boundaries | Features 10–14: $PREFIX/etc/grok, $HOME/.grok, $TMPDIR sockets, /sdcard quarantine & workspace protection | M1 | DONE |
-| M4 | Termux Auth, UX & Truthful Sandboxing | Features 15–26: termux-open-url, loopback & manual code auth, Bionic DNS, Termux:API + OSC 52, policy-only sandbox, wake lock | M1, M2, M3 | PLANNED |
-| M5 | Distribution, Diagnostics & Upstream Sync | Features 27–32: Install modes, updater isolation, grok doctor, ELF validator, upstream sync workflow | M1, M2, M3, M4 | PLANNED |
-| M_E2E | E2E Testing Suite Track | Design & implement 4-Tier test suite (Tiers 1–4) independently, publishing TEST_READY.md | none (parallel) | PLANNED |
-| M_FINAL | Final Verification & Hardening | Phase 1: Pass 100% of E2E test suite (Tiers 1–4). Phase 2: Tier 5 Adversarial Coverage Hardening. Forensic Audit. | M1–M5, M_E2E | PLANNED |
+| M4 | Termux Auth, UX & Truthful Sandboxing | Features 15–26: termux-open-url, loopback & manual code auth, Bionic DNS, Termux:API + OSC 52, policy-only sandbox, wake lock | M1, M2, M3 | DONE |
+| M5 | Distribution, Diagnostics & Upstream Sync | Features 27–32: Install modes, updater isolation, grok doctor, ELF validator, upstream sync workflow | M1, M2, M3, M4 | DONE |
+| M_E2E | E2E Testing Suite Track | Design & implement 4-Tier test suite (Tiers 1–4) independently, publishing TEST_READY.md | none (parallel) | DONE |
+| M_FINAL | Final Verification & Hardening | Phase 1: Pass 100% of E2E test suite (Tiers 1–4). Phase 2: Tier 5 Adversarial Coverage Hardening. Forensic Audit. | M1–M5, M_E2E | DONE |
 
 ## Interface Contracts
 ### `PlatformCapabilities` (in `xai-grok-config` / `xai-grok-platform`)

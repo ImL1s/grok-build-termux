@@ -209,6 +209,58 @@ impl ToolResolver {
             }
         }
     }
+
+    /// Diagnoses all essential and optional CLI tools.
+    pub fn diagnose_all_tools() -> Vec<ToolDiagnosticStatus> {
+        let specs = [&TOOL_RG, &TOOL_FD, &TOOL_GIT, &TOOL_BASH, &TOOL_BFS, &TOOL_UGREP];
+        specs
+            .into_iter()
+            .map(|spec| {
+                let optional = spec.requirement == ToolRequirement::Optional;
+                let remediation = Self::remediation_hint(spec);
+                match Self::resolve(spec) {
+                    Ok(path) => {
+                        let version = probe_tool_version(&path);
+                        ToolDiagnosticStatus {
+                            name: spec.binary_name,
+                            installed: true,
+                            path: Some(path),
+                            version,
+                            optional,
+                            remediation,
+                        }
+                    }
+                    Err(_) => ToolDiagnosticStatus {
+                        name: spec.binary_name,
+                        installed: false,
+                        path: None,
+                        version: None,
+                        optional,
+                        remediation,
+                    },
+                }
+            })
+            .collect()
+    }
+}
+
+/// Diagnostic status for a CLI tool.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ToolDiagnosticStatus {
+    pub name: &'static str,
+    pub installed: bool,
+    pub path: Option<PathBuf>,
+    pub version: Option<String>,
+    pub optional: bool,
+    pub remediation: String,
+}
+
+/// Probes the version of a tool by invoking `<path> --version`.
+pub fn probe_tool_version(path: &Path) -> Option<String> {
+    use std::process::Command;
+    let out = Command::new(path).arg("--version").output().ok()?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    stdout.lines().next().map(|l| l.trim().to_string())
 }
 
 #[cfg(test)]

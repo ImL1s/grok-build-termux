@@ -38,6 +38,9 @@ tests/e2e/
 │   ├── test_scenario_clipboard.py         # Scenario 4: Termux:API & OSC 52 clipboard fallback (2 tests)
 │   ├── test_scenario_elf_validation.py    # Scenario 5: Cross-compiled Bionic ELF & 16 KiB alignment (2 tests)
 │   └── test_scenario_install_update_gating.py # Scenario 6: Package vs standalone update isolation (2 tests)
+├── tier5_adversarial/
+│   ├── test_adversarial_storage_platform.py   # Storage, prefix, socket, policy adversarial tests (50 tests)
+│   └── test_adversarial_auth_updater_elf.py   # OAuth, updater channel, ELF binary adversarial tests (43 tests)
 └── runner.py                              # Unified CLI test runner & JSON reporter
 scripts/
 └── validate_elf.py                        # Standalone ELF validator (Bionic & 16 KiB page alignment)
@@ -55,7 +58,8 @@ scripts/
 | **Tier 2** | Boundary & Corner Cases | All 32 features (≥5 cases / feature) | 160 | 160 | 0 | 0 | **100%** |
 | **Tier 3** | Cross-Feature Interactions | 34 Pairwise combinations | 34 | 34 | 0 | 0 | **100%** |
 | **Tier 4** | Real-World Scenarios | 6 End-to-End Application Workloads | 12 | 12 | 0 | 0 | **100%** |
-| **Total** | **Full E2E Suite** | **Complete Requirement Matrix** | **366** | **366** | **0** | **0** | **100%** |
+| **Tier 5** | Adversarial Hardening | White-Box Security & Edge Hardening | 93 | 93 | 0 | 0 | **100%** |
+| **Total** | **Full E2E Suite** | **Complete Requirement + Adversarial Matrix** | **459** | **459** | **0** | **0** | **100%** |
 
 ### Execution Commands
 
@@ -144,6 +148,9 @@ The standalone validator inspects ELF binary headers to verify:
 - [x] All 32 features covered with ≥5 Tier 1 tests and ≥5 Tier 2 tests.
 - [x] 34 Pairwise Cross-Feature Interaction tests verified in Tier 3.
 - [x] 6 Real-World End-to-End Application Scenarios verified in Tier 4.
-- [x] Standalone ELF Validator (`scripts/validate_elf.py`) self-tested and passing.
-- [x] Unified test runner (`tests/e2e/runner.py`) executes 366/366 tests with 100% pass rate in ~7.4 seconds.
+- [x] 93 Adversarial Hardening tests verified in Tier 5 (50 storage/platform, 43 auth/updater/ELF).
+- [x] Standalone ELF Validator (`scripts/validate_elf.py`) self-tested and passing (6/6).
+- [x] Cross-compilation type check (`cargo check --target aarch64-linux-android -p xai-grok-pager-bin`) passing cleanly.
+- [x] Core crate unit/integration tests (`cargo test`) passing with 0 failures.
+- [x] Complete E2E Suite (`python3 -m unittest discover -s tests/e2e`) executes 459/459 tests with 100% pass rate.
 - [x] `TEST_READY.md` published and active.

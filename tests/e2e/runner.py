@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Unified 4-Tier E2E Test Suite Runner for grok-build-termux.
+Unified E2E Test Suite Runner for grok-build-termux.
 
 Runs and reports:
 - Tier 1: Feature Coverage (32 features × 5 cases = 160 tests)
 - Tier 2: Boundary & Corner Cases (32 features × 5 cases = 160 tests)
 - Tier 3: Pairwise Cross-Feature Interactions (34 tests)
 - Tier 4: Real-World Application Scenarios (12 tests)
-Total: 366 tests
+- Tier 5: Adversarial Hardening Suite (93 tests)
+Standard full run (Tiers 1-4): 366 tests | Hardening (Tier 5): 93 tests | Total: 459 tests
 """
 
 import argparse
@@ -53,7 +54,7 @@ def main():
     )
     parser.add_argument(
         "--tier",
-        choices=["tier1", "tier2", "tier3", "tier4", "all"],
+        choices=["tier1", "tier2", "tier3", "tier4", "tier5", "all"],
         default="all",
         help="Specify which tier to run (default: all)",
     )
@@ -87,6 +88,8 @@ def main():
         tiers_to_run = [("tier3_cross_feature", "Tier 3: Pairwise Cross-Feature Interactions")]
     elif args.tier == "tier4":
         tiers_to_run = [("tier4_real_world", "Tier 4: Real-World Application Scenarios")]
+    elif args.tier == "tier5":
+        tiers_to_run = [("tier5_adversarial", "Tier 5: Adversarial Hardening Suite")]
 
     results = []
     total_tests = 0

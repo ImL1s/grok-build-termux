@@ -418,11 +418,35 @@ pub async fn run_login_flow_with_config(
     };
     let has_client_ui = code_rx.is_some();
 
+    let open_browser_url = |url: &str| {
+        if let Err(e) = webbrowser::open(url) {
+            tracing::debug!(error = %e, "OIDC: webbrowser::open failed, trying fallback");
+            #[cfg(target_os = "android")]
+            {
+                let mut cmd = std::process::Command::new("termux-open-url");
+                let _ = cmd.arg(url)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+            }
+            #[cfg(not(target_os = "android"))]
+            {
+                if xai_grok_config::platform::PlatformCapabilities::current().is_android_termux() {
+                    let mut cmd = std::process::Command::new("termux-open-url");
+                    let _ = cmd.arg(url)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn();
+                }
+            }
+        }
+    };
+
     if has_client_ui {
         // Client provides its own auth UI; just open the browser.
-        if let Err(e) = webbrowser::open(&auth_url) {
-            tracing::debug!(error = %e, "OIDC: failed to open browser");
-        }
+        open_browser_url(&auth_url);
     } else {
         // No client UI — print to stderr.
         eprintln!();
@@ -433,9 +457,7 @@ pub async fn run_login_flow_with_config(
         };
         eprintln!("Signing in with {}...", provider_label);
         eprintln!();
-        if let Err(e) = webbrowser::open(&auth_url) {
-            tracing::debug!(error = %e, "OIDC: failed to open browser");
-        }
+        open_browser_url(&auth_url);
         eprintln!("Open this URL to sign in:");
         eprintln!("  {}", auth_url);
     }

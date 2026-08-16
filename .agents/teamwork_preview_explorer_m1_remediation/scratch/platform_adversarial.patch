@@ -1,0 +1,67 @@
+--- crates/codegen/xai-grok-config/tests/platform_adversarial.rs	2026-08-16 00:04:26
++++ .agents/teamwork_preview_explorer_m1_remediation/scratch/proposed_platform_adversarial.rs	2026-08-16 00:07:38
+@@ -191,12 +191,17 @@
+         // Symlink points to non-existent /sdcard/.grok
+         symlink("/sdcard/.grok", &symlink_path).expect("Failed to create symlink");
+ 
+-        // Empirical probe of the current behavior:
+-        // Notice that symlink_path is /tmp/.../dangling_link (doesn't contain "/sdcard").
+-        // std::fs::canonicalize(&symlink_path) returns Err(NotFound) because target doesn't exist on host.
+-        // As a result, validate_storage_safety(&symlink_path) returns Ok(()), exposing a vulnerability!
+         let res = validate_storage_safety(&symlink_path);
+-        println!("Result of validate_storage_safety on dangling symlink to /sdcard/.grok: {:?}", res);
++        assert!(
++            res.is_err(),
++            "Dangling symlink pointing to /sdcard/.grok must be quarantined"
++        );
++        match res.unwrap_err() {
++            StorageSafetyError::SharedStorageQuarantine { path, reason } => {
++                assert_eq!(path, symlink_path);
++                assert!(!reason.is_empty());
++            }
++        }
+     }
+ }
+ 
+@@ -207,13 +212,19 @@
+         "/data/data/com.termux/files/home/../../../../sdcard/.grok",
+         "/data/data/com.termux/files/home/../../../../storage/emulated/1/.grok",
+         "/data/data/com.termux/files/home/../../../../storage/1234-5678/.grok",
++        "/data/data/com.termux/files/home/././../../../../sdcard",
+         "sdcard/.grok",
+         "storage/emulated/0/.grok",
+     ];
+ 
+     for path in traversal_paths {
+         let res = validate_storage_safety(Path::new(path));
+-        println!("Result of validate_storage_safety for traversal '{}': {:?}", path, res);
++        assert!(
++            res.is_err(),
++            "Expected traversal path '{}' to be quarantined, got {:?}",
++            path,
++            res
++        );
+     }
+ }
+ 
+@@ -225,11 +236,19 @@
+         "/STORAGE/EMULATED/0/.grok",
+         "/Storage/Emulated/0/.grok",
+         "/MNT/SDCARD/.grok",
++        "/Mnt/Media_Rw/test",
++        "SDCARD/.grok",
++        "Storage/Emulated/0/.grok",
+     ];
+ 
+     for path in uppercase_paths {
+         let res = validate_storage_safety(Path::new(path));
+-        println!("Result of validate_storage_safety for case variant '{}': {:?}", path, res);
++        assert!(
++            res.is_err(),
++            "Expected uppercase/case-variant path '{}' to be quarantined, got {:?}",
++            path,
++            res
++        );
+     }
+ }
+ 

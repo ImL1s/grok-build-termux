@@ -129,6 +129,8 @@ fn healthy_report() -> DiagnosticReport {
                 fix: None,
             },
             voice: None,
+            platform: None,
+            tools: None,
         },
         findings: Vec::new(),
         probe_notes: Vec::new(),
