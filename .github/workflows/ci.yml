@@ -39,6 +39,10 @@ jobs:
           python3 tests/e2e/runner.py --tier all
           python3 tests/e2e/runner.py --tier tier5
 
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Android aarch64 Cross-Check
         env:
           CC_aarch64_linux_android: aarch64-linux-android24-clang
