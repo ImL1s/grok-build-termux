@@ -1,0 +1,49 @@
+name: Termux Port CI & Release Verification
+
+on:
+  push:
+    branches: [ main, termux-native ]
+  pull_request:
+    branches: [ main, termux-native ]
+
+jobs:
+  validate-and-test:
+    name: Build & E2E Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28b
+          link-to-sdk: true
+
+      - name: Run ELF Validator Self-Tests
+        run: |
+          python3 scripts/validate_elf.py --self-test
+
+      - name: Run 4-Tier + Tier 5 E2E Test Suite (459 tests)
+        run: |
+          python3 tests/e2e/runner.py --tier all
+          python3 tests/e2e/runner.py --tier tier5
+
+      - name: Android aarch64 Cross-Check
+        env:
+          CC_aarch64_linux_android: aarch64-linux-android24-clang
+          CXX_aarch64_linux_android: aarch64-linux-android24-clang++
+          AR_aarch64_linux_android: llvm-ar
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: aarch64-linux-android24-clang
+        run: |
+          cargo check --target aarch64-linux-android -p xai-grok-pager-bin

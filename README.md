@@ -7,134 +7,228 @@
     <img alt="SpaceXAI logo" src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="96">
   </picture>
   <br>
-  Grok Build (<code>grok</code>)
+  Grok Build for Android / Termux (<code>grok</code>)
 </h1>
 
-**Grok Build** is SpaceXAI's terminal-based AI coding agent. It runs as a
-full-screen TUI that understands your codebase, edits files, executes shell
-commands, searches the web, and manages long-running tasks — interactively,
-headlessly for scripting/CI, or embedded in editors via the Agent Client
-Protocol (ACP).
+[![Termux Port CI](https://github.com/ImL1s/grok-build-termux/actions/workflows/ci.yml/badge.svg)](https://github.com/ImL1s/grok-build-termux/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Platform: Android Termux](https://img.shields.io/badge/platform-Android%20%7C%20Termux-brightgreen.svg)](#architecture--bionic-runtime)
+[![Page Size: 16 KiB Ready](https://img.shields.io/badge/page_size-16_KiB_aligned-orange.svg)](#16-kib-page-size-alignment)
 
-[Installing the released binary](#installing-the-released-binary) ·
-[Building from source](#building-from-source) ·
-[Documentation](#documentation) ·
-[Repository layout](#repository-layout) ·
-[Development](#development) ·
-[Contributing](#contributing) ·
+**Grok Build for Android / Termux** is an unofficial native port of SpaceXAI's terminal-based AI coding agent (`grok`), engineered specifically for Android Bionic libc and modern 16 KiB page-size kernels.
+
+[Installation](#installation) ·
+[Quick Start & Auth](#quick-start--authentication) ·
+[Architecture & Bionic Runtime](#architecture--bionic-runtime) ·
+[Capability Matrix](#capability-differences--platform-matrix) ·
+[Diagnostics](#diagnostics--troubleshooting) ·
+[Building from Source](#building-from-source) ·
+[Upstream Sync Policy](#upstream-sync-policy) ·
 [License](#license)
-
-![Grok Build TUI](https://media.x.ai/v1/website/universe-tui-screenshot-6f7a0837.png)
-
-**Learn more about Grok Build at [x.ai/cli](https://x.ai/cli)**
-
-This repository contains the Rust source for the `grok` CLI/TUI and its agent
-runtime. It is synced periodically from the SpaceXAI monorepo.
-
-A small `SOURCE_REV` file at the root records the full monorepo commit SHA
-for the version of the code present in this tree.
 
 </div>
 
 ---
 
-## Installing the released binary
+> [!IMPORTANT]
+> **Unofficial Community Port**: This repository is a native Android/Termux port tracking upstream [`xai-org/grok-build`](https://github.com/xai-org/grok-build). It is not officially endorsed or supported by xAI.
 
-Prebuilt binaries are published for macOS, Linux, and Windows:
+---
+
+## Installation
+
+### Method 1: Termux Package Manager (Recommended)
+
+Install `grok-build` and essential runtime dependencies directly inside Termux:
 
 ```sh
-curl -fsSL https://x.ai/cli/install.sh | bash   # macOS / Linux / Git Bash
-irm https://x.ai/cli/install.ps1 | iex          # Windows PowerShell
+# 1. Update package lists
+pkg update -y
+
+# 2. Install required CLI tools & Termux:API helpers
+pkg install -y git ripgrep fd bash termux-api
+
+# 3. Install Grok Build (when available in Termux APT repositories)
+pkg install -y grok-build
+```
+
+> [!TIP]
+> Make sure the **Termux:API** companion application is installed on your Android device (available on F-Droid or GitHub Releases) to enable native clipboard integration and URL browser dispatch.
+
+### Method 2: Prebuilt Binary (GitHub Releases)
+
+Download the native `aarch64-linux-android` release binary directly:
+
+```sh
+# Download latest release binary
+curl -fsSL -o "$PREFIX/bin/grok" \
+  https://github.com/ImL1s/grok-build-termux/releases/latest/download/xai-grok-pager-aarch64-linux-android
+
+# Grant executable permissions
+chmod +x "$PREFIX/bin/grok"
+
+# Verify installation
 grok --version
 ```
 
-See the [changelog](https://x.ai/build/changelog) for the latest fixes,
-features, and improvements in each release.
+---
 
-## Building from source
+## Quick Start & Authentication
+
+1. **Launch Grok Build**:
+   ```sh
+   grok
+   ```
+
+2. **Authenticate with xAI**:
+   - On first launch, Grok Build automatically triggers `termux-open-url` to open your default Android web browser for OAuth login.
+   - After authorizing, the browser redirects back to the local loopback server (`http://127.0.0.1:<port>/oauth/callback`).
+   - **Manual Fallback**: If the browser redirect does not complete automatically, copy the authorization code or full callback URL from your browser address bar and paste it into the terminal prompt.
+
+3. **Verify Environment with `grok doctor`**:
+   ```sh
+   grok doctor
+   ```
+
+---
+
+## Architecture & Bionic Runtime
+
+The Android/Termux port is engineered for native performance, zero glibc/proot overhead, and full hardware compatibility.
+
+### 1. Native Bionic Dynamic Linker
+Unlike desktop Linux ports that require glibc emulation or `proot`, `grok-build-termux` links directly against Android Bionic libc (`/system/bin/linker64` on 64-bit ARM).
+
+### 2. 16 KiB Page-Size Alignment (Android 15+ Compatibility)
+Android 15 introduces support for 16 KiB memory page sizes on flagship devices (e.g., Google Pixel 8/9, Samsung Galaxy S24). Legacy 4 KiB ELF binaries fail to execute or crash on 16 KiB kernels.
+
+All release binaries in this repository are compiled with:
+```toml
+rustflags = [
+    "-C", "link-arg=-Wl,-z,relro,-z,now,-z,noexecstack",
+    "-C", "link-arg=-Wl,-z,max-page-size=16384",
+]
+```
+Ensuring all `PT_LOAD` segments satisfy `p_align >= 0x4000` and ELF congruence (`p_vaddr % p_align == p_offset % p_align`).
+
+You can independently verify ELF compliance using the bundled validator:
+```sh
+python3 scripts/validate_elf.py "$PREFIX/bin/grok"
+```
+
+### 3. Dynamic `$PREFIX` & Storage Quarantine
+- **Dynamic Configuration**: Resolves system configurations under `$PREFIX/etc/grok` and user configurations under `$HOME/.grok`.
+- **Shared Storage Quarantine**: Strictly prevents placing `GROK_HOME`, session state, or credentials on Android shared storage (`/sdcard`, `/storage/emulated/0`) because FAT/FUSE filesystems do not enforce POSIX file permissions (`0700`).
+- **Safe Workspace Mode**: Editing project code residing on `/sdcard` is supported while keeping security credentials isolated in private app storage.
+
+---
+
+## Capability Differences & Platform Matrix
+
+| Subsystem | Desktop (macOS / Linux) | Termux / Android Port | Details |
+|---|---|---|---|
+| **Text Clipboard** | `arboard` / `pbcopy` | `termux-clipboard` & ANSI OSC 52 | Primary clipboard via `termux-clipboard-*`; falls back to terminal OSC 52 escape sequences. |
+| **Image Clipboard** | System pasteboard | Gracefully disabled | Image paste is disabled in mobile TUI without crashing. |
+| **Sandbox Kind** | Kernel-enforced (Landlock / Seatbelt) | `policy-only` | Truthfully reports `policy-only` in `grok doctor`. Enforces file boundaries in-process. |
+| **Voice / Dictation**| `cpal` / ALSA / CoreAudio | Gated off | ALSA/cpal dependencies excluded on Android to prevent build and runtime crashes. |
+| **Browser Handoff** | `xdg-open` / `open` | `termux-open-url` | Dispatches system Android browser for OAuth and external documentation. |
+| **CLI Search Tools** | Auto-downloaded binaries | Native `$PATH` resolution | Uses Termux `ripgrep` (`rg`), `fd`, `git`, and `bash` from `$PREFIX/bin`. |
+| **Self-Updater** | In-app binary update | Package-aware isolation | Package installs delegate updates to `pkg upgrade grok-build`; standalone installs use isolated channels. |
+| **Wake Lock** | N/A | `termux-wake-lock` | Optionally acquires Android wake lock during long-running background agent tasks. |
+
+---
+
+## Diagnostics & Troubleshooting
+
+Run built-in diagnostics to check your Termux environment:
+
+```sh
+# Human-readable diagnostic overview
+grok doctor
+
+# Machine-readable JSON output for automated diagnostics
+grok doctor --json
+```
+
+### Common Issues & Remedies
+
+| Issue | Cause | Resolution |
+|---|---|---|
+| `Required tool 'rg' not found` | Missing ripgrep | Run `pkg install ripgrep` |
+| `Required tool 'fd' not found` | Missing fd | Run `pkg install fd` |
+| `Clipboard unavailable` | Missing Termux:API package or app | Run `pkg install termux-api` and install Termux:API APK from F-Droid |
+| `Storage safety quarantine error` | `$HOME` or `GROK_HOME` set to `/sdcard` | Set `GROK_HOME` inside Termux internal storage (`/data/data/com.termux/files/home/.grok`) |
+| `OAuth browser handoff failed` | `termux-open-url` failed or blocked | Paste the manual authorization code or callback URL into the terminal prompt |
+
+---
+
+## Building from Source
+
+### Option A: Cross-Compiling from Host (macOS / Linux)
 
 Requirements:
-
-- **Rust** — the toolchain is pinned by [`rust-toolchain.toml`](rust-toolchain.toml);
-  `rustup` installs it automatically on first build.
-- **[DotSlash](https://dotslash-cli.com)** — required so hermetic tools under
-  [`bin/`](bin/) (notably [`bin/protoc`](bin/protoc)) can download and run.
-  Install it and ensure `dotslash` is on your `PATH` **before** building:
-
-  ```sh
-  cargo install dotslash
-  # or: prebuilt packages — https://dotslash-cli.com/docs/installation/
-  /usr/bin/env dotslash --help   # sanity check
-  ```
-
-- **protoc** — proto codegen resolves [`bin/protoc`](bin/protoc) via DotSlash,
-  or falls back to a `protoc` on `PATH` / `$PROTOC`.
-- macOS and Linux are supported build hosts; Windows builds are best-effort
-  and not currently tested from this tree.
+- Rust toolchain pinned in `rust-toolchain.toml`
+- Android NDK (r28b or newer, API level 24+)
+- Python 3.10+
 
 ```sh
-cargo run -p xai-grok-pager-bin              # build + launch the TUI
-cargo build -p xai-grok-pager-bin --release  # release binary: target/release/xai-grok-pager
-cargo check -p xai-grok-pager-bin            # fast validation
+# 1. Add Android target
+rustup target add aarch64-linux-android
+
+# 2. Build release binary with 16 KiB alignment
+cargo build --target aarch64-linux-android -p xai-grok-pager-bin --release
+
+# 3. Validate ELF alignment
+python3 scripts/validate_elf.py target/aarch64-linux-android/release/xai-grok-pager
 ```
 
-The binary artifact is named `xai-grok-pager`; official installs ship it as
-`grok`. On first launch it opens your browser to authenticate — see the
-[authentication guide](crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md).
-
-## Documentation
-
-Full online documentation is available at
-[docs.x.ai/build/overview](https://docs.x.ai/build/overview).
-
-The user guide ships with the pager crate:
-[`crates/codegen/xai-grok-pager/docs/user-guide/`](crates/codegen/xai-grok-pager/docs/user-guide/)
-— getting started, keyboard shortcuts, slash commands, configuration, theming,
-MCP servers, skills, plugins, hooks, headless mode, sandboxing, and more.
-
-## Repository layout
-
-| Path | Contents |
-|------|----------|
-| `crates/codegen/xai-grok-pager-bin` | Composition-root package; builds the `xai-grok-pager` binary |
-| `crates/codegen/xai-grok-pager` | The TUI: scrollback, prompt, modals, rendering |
-| `crates/codegen/xai-grok-shell` | Agent runtime + leader/stdio/headless entry points |
-| `crates/codegen/xai-grok-tools` | Tool implementations (terminal, file edit, search, ...) |
-| `crates/codegen/xai-grok-workspace` | Host filesystem, VCS, execution, checkpoints |
-| `crates/codegen/...` | The rest of the CLI crate closure (config, MCP, markdown, sandbox, ...) |
-| `crates/common/`, `crates/build/`, `prod/mc/` | Small shared leaf crates pulled in by the closure |
-| `third_party/` | Vendored upstream source (Mermaid diagram stack) — see below |
-
-> [!IMPORTANT]
-> The root `Cargo.toml` (workspace members, dependency versions, lints,
-> profiles) is **generated** — treat it as read-only. Prefer editing per-crate
-> `Cargo.toml` files.
-
-## Development
+### Option B: Compiling Directly Inside Termux
 
 ```sh
-cargo check -p <crate>        # always target specific crates; full-workspace builds are slow
-cargo test -p xai-grok-config # per-crate tests
-cargo clippy -p <crate>       # lint config: clippy.toml at the repo root
-cargo fmt --all               # rustfmt.toml at the repo root
+# 1. Install build toolchain
+pkg install -y rust clang binutils-is-llvm protobuf make git
+
+# 2. Clone repository
+git clone https://github.com/ImL1s/grok-build-termux.git
+cd grok-build-termux
+
+# 3. Build release binary
+cargo build -p xai-grok-pager-bin --release
+
+# 4. Install binary to Termux bin
+cp target/release/xai-grok-pager "$PREFIX/bin/grok"
 ```
 
-## Contributing
+---
 
-> [!NOTE]
-> External contributions are not accepted. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+## Upstream Sync Policy
+
+This repository actively tracks the upstream [`xai-org/grok-build`](https://github.com/xai-org/grok-build) monorepo.
+
+- **Source Tracking**: The `SOURCE_REV` file at the repository root contains the exact upstream monorepo commit SHA (`e6a67a5408288c98380cd13f3b1fe1fbc01c9f1f`).
+- **Low-Conflict Patch Architecture**: Downstream modifications are organized in isolated modular layers (`crates/codegen/xai-grok-config`, `xai-grok-shared`, `xai-grok-sandbox`, `xai-grok-tools`, `xai-grok-update`) to minimize merge conflicts during upstream rebases.
+- **Sync Workflow**: Periodic upstream snapshots are synchronized to a dedicated tracking branch and merged into `termux-native` via reviewable Pull Requests.
+
+---
+
+## Testing & Quality Assurance
+
+The port is verified by a 5-tier test suite covering all 32 inventoried features:
+
+```sh
+# Run full E2E test suite (459 tests)
+python3 tests/e2e/runner.py --tier all && python3 tests/e2e/runner.py --tier tier5
+
+# Run ELF alignment self-tests
+python3 scripts/validate_elf.py --self-test
+```
+
+See [`TEST_READY.md`](TEST_READY.md) and [`PROJECT.md`](PROJECT.md) for full architectural specifications and verification matrices.
+
+---
 
 ## License
 
-First-party code in this repository is licensed under the **Apache License,
-Version 2.0** — see [`LICENSE`](LICENSE).
+This project is licensed under the **Apache License, Version 2.0** — see [`LICENSE`](LICENSE).
 
-Third-party and vendored code remains under its original licenses. See:
-
-- [`THIRD-PARTY-NOTICES`](THIRD-PARTY-NOTICES) — crates.io / git dependencies,
-  bundled UI themes, and **in-tree source ports** (including openai/codex and
-  sst/opencode tool implementations)
-- [`crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md`](crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md)
-  — crate-local notice for the codex and opencode ports (license texts +
-  Apache §4(b) change notice)
-- [`third_party/NOTICE`](third_party/NOTICE) — vendored Mermaid-stack index
+Third-party and upstream vendored notices are preserved in [`THIRD-PARTY-NOTICES`](THIRD-PARTY-NOTICES) and [`crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md`](crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md).
