@@ -24,25 +24,11 @@ UPSTREAM_SHA="$(gh api "repos/$UPSTREAM/commits/$UPSTREAM_BRANCH" --jq .sha)"
 log "Upstream: $UPSTREAM@$UPSTREAM_SHA ($UPSTREAM_BRANCH)"
 log "Target fork: $REPO"
 
-if gh repo view "$REPO" --json parent >/dev/null 2>&1; then
-  PARENT="$(gh repo view "$REPO" --json parent --jq 'if .parent then (.parent.owner.login + "/" + .parent.name) else "" end')"
-  [[ "$PARENT" == "$UPSTREAM" ]] || die "$REPO exists but is not a fork of $UPSTREAM (parent: ${PARENT:-none})"
-  log "Fork already exists; keeping it and applying the backlog idempotently"
+if gh repo view "$REPO" --json name >/dev/null 2>&1; then
+  log "Target repo $REPO exists; applying backlog and metadata"
 else
-  log "Forking the current upstream default branch as $FORK_NAME"
-  if gh repo fork "$UPSTREAM" --fork-name "$FORK_NAME" --clone=false; then
-    CREATED=1
-  else
-    # Compatibility fallback for older gh versions that do not support --fork-name.
-    warn "Direct named fork failed; checking for the default-name fork"
-    if ! gh repo view "$DEFAULT_FORK" --json parent >/dev/null 2>&1; then
-      gh repo fork "$UPSTREAM" --clone=false
-    fi
-    PARENT="$(gh repo view "$DEFAULT_FORK" --json parent --jq 'if .parent then (.parent.owner.login + "/" + .parent.name) else "" end')"
-    [[ "$PARENT" == "$UPSTREAM" ]] || die "$DEFAULT_FORK is not the expected upstream fork"
-    gh repo rename -R "$DEFAULT_FORK" "$FORK_NAME" --yes
-    CREATED=1
-  fi
+  log "Creating target repository $REPO"
+  gh repo create "$REPO" --public --description "Unofficial native Android/Termux port of Grok Build, tracking $UPSTREAM."
 fi
 
 # GitHub can take a moment to make a new fork queryable.
