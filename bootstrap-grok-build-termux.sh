@@ -24,8 +24,8 @@ UPSTREAM_SHA="$(gh api "repos/$UPSTREAM/commits/$UPSTREAM_BRANCH" --jq .sha)"
 log "Upstream: $UPSTREAM@$UPSTREAM_SHA ($UPSTREAM_BRANCH)"
 log "Target fork: $REPO"
 
-if gh repo view "$REPO" --json nameWithOwner >/dev/null 2>&1; then
-  PARENT="$(gh repo view "$REPO" --json parent --jq '.parent.nameWithOwner // ""')"
+if gh repo view "$REPO" --json parent >/dev/null 2>&1; then
+  PARENT="$(gh repo view "$REPO" --json parent --jq 'if .parent then (.parent.owner.login + "/" + .parent.name) else "" end')"
   [[ "$PARENT" == "$UPSTREAM" ]] || die "$REPO exists but is not a fork of $UPSTREAM (parent: ${PARENT:-none})"
   log "Fork already exists; keeping it and applying the backlog idempotently"
 else
@@ -38,7 +38,7 @@ else
     if ! gh repo view "$DEFAULT_FORK" --json parent >/dev/null 2>&1; then
       gh repo fork "$UPSTREAM" --clone=false
     fi
-    PARENT="$(gh repo view "$DEFAULT_FORK" --json parent --jq '.parent.nameWithOwner // ""')"
+    PARENT="$(gh repo view "$DEFAULT_FORK" --json parent --jq 'if .parent then (.parent.owner.login + "/" + .parent.name) else "" end')"
     [[ "$PARENT" == "$UPSTREAM" ]] || die "$DEFAULT_FORK is not the expected upstream fork"
     gh repo rename -R "$DEFAULT_FORK" "$FORK_NAME" --yes
     CREATED=1
@@ -129,10 +129,8 @@ find_issue_url() {
     | head -n1
 }
 
-create_issue() {
-  local title="$1" labels="$2" parent="${3:-}"
-  local body_file="$TMP_ROOT/$(printf '%s' "$title" | sha256sum | cut -d' ' -f1).md"
-  cat > "$body_file"
+create_issue_from_file() {
+  local title="$1" labels="$2" parent="${3:-}" body_file="$4"
 
   local existing
   existing="$(find_issue_url "$title")"
@@ -142,10 +140,11 @@ create_issue() {
     return 0
   fi
 
-  local -a args=(issue create -R "$REPO" --title "$title" --body-file "$body_file" --label "$labels" --milestone "$MILESTONE")
   if [[ -n "$parent" ]]; then
-    args+=(--parent "$parent")
+    printf '\n\n---\n**Parent Epic**: #%s\n' "$parent" >> "$body_file"
   fi
+
+  local -a args=(issue create -R "$REPO" --title "$title" --body-file "$body_file" --label "$labels" --milestone "$MILESTONE")
 
   local url
   url="$(gh "${args[@]}")"
@@ -163,16 +162,17 @@ link_blocked_by() {
 
 log "Creating the Termux port backlog"
 
-EPIC_URL="$({
-  printf 'Baseline: `%s@%s` on branch `%s`.\n\n' "$UPSTREAM" "$UPSTREAM_SHA" "$UPSTREAM_BRANCH"
-  cat <<'EOF'
+# 1. EPIC
+cat <<EOF > "$TMP_ROOT/epic.md"
+Baseline: \`$UPSTREAM@$UPSTREAM_SHA\` on branch \`$UPSTREAM_BRANCH\`.
+
 ## Goal
 
 Ship a first-class, native Termux port of Grok Build that targets Android/Bionic directly rather than running the Linux musl artifact through byte patches or requiring PRoot.
 
 ## Definition of done
 
-- A native `aarch64-linux-android` binary starts and runs in stock Termux.
+- A native \`aarch64-linux-android\` binary starts and runs in stock Termux.
 - OAuth discovery, browser login, loopback callback, and manual-code fallback work.
 - TUI, shell tools, Git operations, file edits, MCP, hooks, headless mode, and session resume work on-device.
 - Termux paths, browser integration, optional clipboard support, process lifecycle, and update behavior are explicit and tested.
@@ -183,7 +183,7 @@ Ship a first-class, native Termux port of Grok Build that targets Android/Bionic
 
 ## Non-goals for the first native release
 
-- Treating a patched `linux-aarch64`/musl binary as the final architecture.
+- Treating a patched \`linux-aarch64\`/musl binary as the final architecture.
 - Treating PRoot as the primary runtime or as a security boundary.
 - Claiming full image/file clipboard or microphone parity before an Android-native backend exists.
 
@@ -194,126 +194,130 @@ Ship a first-class, native Termux port of Grok Build that targets Android/Bionic
 3. UX integration, sandbox truth, lifecycle hardening, and release packaging.
 4. Device matrix, documentation, and sustainable upstream synchronization.
 EOF
-} | create_issue "[EPIC] Native Android/Termux port of Grok Build" "epic,termux,android,P0")"
+EPIC_URL="$(create_issue_from_file "[EPIC] Native Android/Termux port of Grok Build" "epic,termux,android,P0" "" "$TMP_ROOT/epic.md")"
 EPIC_NUM="$(issue_number "$EPIC_URL")"
 
-PLATFORM_URL="$({
-  printf 'Baseline: `%s@%s`.\n\n' "$UPSTREAM" "$UPSTREAM_SHA"
-  cat <<'EOF'
+# 2. PLATFORM
+cat <<EOF > "$TMP_ROOT/platform.md"
+Baseline: \`$UPSTREAM@$UPSTREAM_SHA\`.
+
 ## Problem
 
-Android satisfies Rust's `cfg(unix)`, but it is not a normal FHS Linux distribution. Existing decisions for config paths, browser opening, clipboard, desktop audio, sandboxing, updater artifacts, and bundled tools are spread across crates and can accidentally classify Android as desktop Linux or generic Unix.
+Android satisfies Rust's \`cfg(unix)\`, but it is not a normal FHS Linux distribution. Existing decisions for config paths, browser opening, clipboard, desktop audio, sandboxing, updater artifacts, and bundled tools are spread across crates and can accidentally classify Android as desktop Linux or generic Unix.
 
 ## Scope
 
 - Add one injectable source of truth for platform kind and capabilities.
 - Distinguish at least desktop Linux, macOS, Windows, Android/Termux, and unsupported Android hosts.
-- Derive Termux locations from environment/runtime facts such as `PREFIX`; do not hard-code one package name or `/data/data/com.termux`.
+- Derive Termux locations from environment/runtime facts such as \`PREFIX\`; do not hard-code one package name or \`/data/data/com.termux\`.
 - Model capabilities such as URL opening, text clipboard, image clipboard, microphone, hard sandbox, package-managed updates, and background leader support.
 - Make the result available to config, auth, pager/render, shell, tools, sandbox, updater, doctor, and release code with minimal upstream-conflict surface.
 - Add environment-injected unit tests for Termux, non-Termux Android, and every existing desktop platform.
 
 ## Acceptance criteria
 
-- `grok doctor` can report Android/Termux, ABI, prefix, home, temp/runtime path, page size, install mode, and capability flags.
-- New Termux behavior does not depend on scattered `cfg!(unix)` checks.
+- \`grok doctor\` can report Android/Termux, ABI, prefix, home, temp/runtime path, page size, install mode, and capability flags.
+- New Termux behavior does not depend on scattered \`cfg!(unix)\` checks.
 - Non-Termux platform behavior and tests remain unchanged.
-- Missing or malformed `PREFIX` fails with a useful diagnosis rather than silently using `/etc`, `/usr`, or `/tmp`.
+- Missing or malformed \`PREFIX\` fails with a useful diagnosis rather than silently using \`/etc\`, \`/usr\`, or \`/tmp\`.
 - The implementation respects the upstream note that the root workspace manifest is generated and keeps recurring sync conflicts small.
 
 ## Likely touch points
 
-- `crates/codegen/xai-grok-config/src/paths.rs`
-- `crates/codegen/xai-grok-shared/src/clipboard.rs`
-- `crates/codegen/xai-grok-shell/src/auth/oidc/login.rs`
-- `crates/codegen/xai-grok-pager-render/src/link_opener.rs`
-- `crates/codegen/xai-grok-update/`
-- `crates/codegen/xai-grok-sandbox/`
+- \`crates/codegen/xai-grok-config/src/paths.rs\`
+- \`crates/codegen/xai-grok-shared/src/clipboard.rs\`
+- \`crates/codegen/xai-grok-shell/src/auth/oidc/login.rs\`
+- \`crates/codegen/xai-grok-pager-render/src/link_opener.rs\`
+- \`crates/codegen/xai-grok-update/\`
+- \`crates/codegen/xai-grok-sandbox/\`
 EOF
-} | create_issue "[P0] Add a centralized Android/Termux platform capability layer" "termux,android,P0,platform" "$EPIC_NUM")"
+PLATFORM_URL="$(create_issue_from_file "[P0] Add a centralized Android/Termux platform capability layer" "termux,android,P0,platform" "$EPIC_NUM" "$TMP_ROOT/platform.md")"
 PLATFORM_NUM="$(issue_number "$PLATFORM_URL")"
 
-BUILD_URL="$({
-  printf 'Baseline: `%s@%s`.\n\n' "$UPSTREAM" "$UPSTREAM_SHA"
-  cat <<'EOF'
+# 3. BUILD
+cat <<EOF > "$TMP_ROOT/build.md"
+Baseline: \`$UPSTREAM@$UPSTREAM_SHA\`.
+
 ## Problem
 
 The current released Linux ARM64 artifact is not a supported Android ABI target. Running it in Termux exposes resolver, filesystem, dependency, and updater mismatches even when the TUI happens to start.
 
 ## Scope
 
-- Add a supported `aarch64-linux-android` build using the Android NDK and Bionic.
+- Add a supported \`aarch64-linux-android\` build using the Android NDK and Bionic.
 - Use an explicit Termux feature/profile rather than inheriting the desktop default feature set.
 - Pin and document a reproducible NDK/Rust toolchain; prefer an NDK version whose default linker output supports 16 KiB page-size devices.
 - Start with a justified minimum Android API level and record the reason in build/release docs.
-- Keep optional `x86_64-linux-android` cross-build support available for emulator validation.
+- Keep optional \`x86_64-linux-android\` cross-build support available for emulator validation.
 - Produce an artifact whose name identifies Android/Termux rather than Linux.
 
 ## Acceptance criteria
 
-- `cargo build -p xai-grok-pager-bin --target aarch64-linux-android --release ...` succeeds in CI.
+- \`cargo build -p xai-grok-pager-bin --target aarch64-linux-android --release ...\` succeeds in CI.
 - ELF inspection proves the artifact does not require a glibc loader or ship a desktop Linux ABI by mistake.
-- The artifact starts on a clean Termux installation and passes `--version`, `--help`, headless smoke, and TUI startup/terminal-restore tests.
+- The artifact starts on a clean Termux installation and passes \`--version\`, \`--help\`, headless smoke, and TUI startup/terminal-restore tests.
 - Native libraries are compatible with both 4 KiB and 16 KiB page-size Android devices.
-- No binary byte patch or synthetic `/etc/resolv.conf` is required.
+- No binary byte patch or synthetic \`/etc/resolv.conf\` is required.
 
 ## Likely touch points
 
-- `crates/codegen/xai-grok-pager-bin/Cargo.toml`
-- `crates/codegen/xai-grok-pager-bin/src/main.rs`
-- `.cargo/config.toml` or dedicated build scripts
+- \`crates/codegen/xai-grok-pager-bin/Cargo.toml\`
+- \`crates/codegen/xai-grok-pager-bin/src/main.rs\`
+- \`.cargo/config.toml\` or dedicated build scripts
 - release workflows and artifact validation scripts
 EOF
-} | create_issue "[P0] Build a native aarch64-linux-android Bionic binary" "termux,android,P0,build" "$EPIC_NUM")"
+BUILD_URL="$(create_issue_from_file "[P0] Build a native aarch64-linux-android Bionic binary" "termux,android,P0,build" "$EPIC_NUM" "$TMP_ROOT/build.md")"
 BUILD_NUM="$(issue_number "$BUILD_URL")"
 link_blocked_by "$BUILD_NUM" "$PLATFORM_NUM"
 
-DEPS_URL="$({
-  printf 'Baseline: `%s@%s`.\n\n' "$UPSTREAM" "$UPSTREAM_SHA"
-  cat <<'EOF'
+# 4. DEPS
+cat <<EOF > "$TMP_ROOT/deps.md"
+Baseline: \`$UPSTREAM@$UPSTREAM_SHA\`.
+
 ## Problem
 
-Several dependency and feature gates classify every Unix or every non-Linux platform as a supported desktop target. Android can therefore inherit jemalloc/profiling, desktop sandbox enforcement, `arboard`, and `cpal`/voice paths that are not valid for a Termux CLI.
+Several dependency and feature gates classify every Unix or every non-Linux platform as a supported desktop target. Android can therefore inherit jemalloc/profiling, desktop sandbox enforcement, \`arboard\`, and \`cpal\`/voice paths that are not valid for a Termux CLI.
 
 ## Scope
 
 - Gate jemalloc and its profiling/stat hooks to supported desktop Unix targets, excluding Android unless separately proven.
 - Make the Termux build use Bionic's allocator initially.
-- Exclude `arboard` from Android and provide a platform backend seam instead of a fake desktop display.
-- Disable microphone capture in the first Termux feature set; ensure `cpal` is not pulled into the Android dependency graph.
+- Exclude \`arboard\` from Android and provide a platform backend seam instead of a fake desktop display.
+- Disable microphone capture in the first Termux feature set; ensure \`cpal\` is not pulled into the Android dependency graph.
 - Disable desktop hard-sandbox enforcement by default on Android while retaining policy-level checks.
 - Audit other native/transitive dependencies for X11, Wayland, ALSA, AppKit, glibc, or unsupported syscalls.
 
 ## Acceptance criteria
 
-- `cargo tree` for `aarch64-linux-android` contains no accidental desktop clipboard/audio stack and no glibc-only native dependency.
+- \`cargo tree\` for \`aarch64-linux-android\` contains no accidental desktop clipboard/audio stack and no glibc-only native dependency.
 - Termux builds with an explicit feature set and no hidden dependency on desktop defaults.
 - Disabled voice/image/file clipboard paths are not advertised and do not panic.
 - Existing desktop release feature sets remain behaviorally unchanged.
-- CI has compile guards preventing future `cfg(unix)` regressions from reintroducing these dependencies.
+- CI has compile guards preventing future \`cfg(unix)\` regressions from reintroducing these dependencies.
 
 ## Known starting points
 
-- `crates/codegen/xai-grok-pager-bin/Cargo.toml`
-- `crates/codegen/xai-grok-pager-bin/src/main.rs`
-- `crates/codegen/xai-grok-shared/Cargo.toml`
-- `crates/codegen/xai-grok-voice/Cargo.toml`
+- \`crates/codegen/xai-grok-pager-bin/Cargo.toml\`
+- \`crates/codegen/xai-grok-pager-bin/src/main.rs\`
+- \`crates/codegen/xai-grok-shared/Cargo.toml\`
+- \`crates/codegen/xai-grok-voice/Cargo.toml\`
 EOF
-} | create_issue "[P0] Gate desktop-only allocators, sandbox, clipboard, and voice dependencies on Android" "termux,android,P0,dependencies,build" "$EPIC_NUM")"
+DEPS_URL="$(create_issue_from_file "[P0] Gate desktop-only allocators, sandbox, clipboard, and voice dependencies on Android" "termux,android,P0,dependencies,build" "$EPIC_NUM" "$TMP_ROOT/deps.md")"
 DEPS_NUM="$(issue_number "$DEPS_URL")"
 link_blocked_by "$DEPS_NUM" "$PLATFORM_NUM"
 
-PATHS_URL="$({
-  printf 'Baseline: `%s@%s`.\n\n' "$UPSTREAM" "$UPSTREAM_SHA"
-  cat <<'EOF'
+# 5. PATHS
+cat <<EOF > "$TMP_ROOT/paths.md"
+Baseline: \`$UPSTREAM@$UPSTREAM_SHA\`.
+
 ## Problem
 
-Generic Unix paths such as `/etc/grok` and assumptions around `/tmp`, runtime sockets, executable extraction, permissions, and symlinks do not map cleanly to Termux. Android shared storage also lacks the security and filesystem semantics required for credentials, session state, binaries, and atomic updates.
+Generic Unix paths such as \`/etc/grok\` and assumptions around \`/tmp\`, runtime sockets, executable extraction, permissions, and symlinks do not map cleanly to Termux. Android shared storage also lacks the security and filesystem semantics required for credentials, session state, binaries, and atomic updates.
 
 ## Scope
 
-- Resolve system config under `$PREFIX/etc/grok` and temporary/runtime state under Termux-owned locations.
-- Keep user state under a private `$HOME/.grok` by default.
+- Resolve system config under \`\$PREFIX/etc/grok\` and temporary/runtime state under Termux-owned locations.
+- Keep user state under a private \`\$HOME/.grok\` by default.
 - Audit all absolute FHS paths and external command locations.
 - Keep auth, sessions, hooks, caches containing private data, update staging, and extracted executables off shared storage.
 - Permit shared-storage workspaces only with an explicit capability/warning model; disable features that require unsupported permissions or symlink semantics instead of corrupting state.
@@ -322,32 +326,33 @@ Generic Unix paths such as `/etc/grok` and assumptions around `/tmp`, runtime so
 
 ## Acceptance criteria
 
-- No Termux code path reads or writes `/etc/grok`, `/usr/bin`, `/bin`, or desktop `/tmp` by assumption.
-- `GROK_HOME` on Android shared storage is rejected with a precise remediation message.
+- No Termux code path reads or writes \`/etc/grok\`, \`/usr/bin\`, \`/bin\`, or desktop \`/tmp\` by assumption.
+- \`GROK_HOME\` on Android shared storage is rejected with a precise remediation message.
 - A workspace on shared storage cannot cause credentials, hooks, vendor executables, or update payloads to be stored there implicitly.
 - Auth/session persistence, atomic writes, symlink checks, socket startup, and stale-socket recovery pass on a real device.
 - Existing macOS/Linux/Windows path behavior is unchanged.
 
 ## Known starting point
 
-- `crates/codegen/xai-grok-config/src/paths.rs`
+- \`crates/codegen/xai-grok-config/src/paths.rs\`
 EOF
-} | create_issue "[P0] Make config, runtime, socket, and storage paths Termux-safe" "termux,android,P0,filesystem,security" "$EPIC_NUM")"
+PATHS_URL="$(create_issue_from_file "[P0] Make config, runtime, socket, and storage paths Termux-safe" "termux,android,P0,filesystem,security" "$EPIC_NUM" "$TMP_ROOT/paths.md")"
 PATHS_NUM="$(issue_number "$PATHS_URL")"
 link_blocked_by "$PATHS_NUM" "$PLATFORM_NUM"
 
-AUTH_URL="$({
-  printf 'Baseline: `%s@%s`.\n\n' "$UPSTREAM" "$UPSTREAM_SHA"
-  cat <<'EOF'
+# 6. AUTH
+cat <<EOF > "$TMP_ROOT/auth.md"
+Baseline: \`$UPSTREAM@$UPSTREAM_SHA\`.
+
 ## Problem
 
-The OIDC flow already has a loopback callback and manual-paste fallback, but browser opening uses a desktop-oriented backend and current Linux artifacts can fail before login during OIDC discovery. Termux users need a native resolver path and actionable diagnostics rather than a generic `error sending request for url`.
+The OIDC flow already has a loopback callback and manual-paste fallback, but browser opening uses a desktop-oriented backend and current Linux artifacts can fail before login during OIDC discovery. Termux users need a native resolver path and actionable diagnostics rather than a generic \`error sending request for url\`.
 
 ## Scope
 
-- Route OAuth browser opening through the platform capability layer and `termux-open-url` when available.
-- Preserve the `127.0.0.1` loopback callback and bare-code/full-callback-URL paste paths.
-- Use the Android/Bionic resolver by virtue of the native target; do not hard-code public DNS servers or mutate `/etc/resolv.conf`.
+- Route OAuth browser opening through the platform capability layer and \`termux-open-url\` when available.
+- Preserve the \`127.0.0.1\` loopback callback and bare-code/full-callback-URL paste paths.
+- Use the Android/Bionic resolver by virtue of the native target; do not hard-code public DNS servers or mutate \`/etc/resolv.conf\`.
 - Add structured network diagnostics for DNS, TCP, TLS, HTTP status, OIDC discovery, IPv4/IPv6, proxy environment, custom CA, VPN/Private DNS symptoms, and loopback binding.
 - Make failures identify the failing stage and retain the underlying error chain.
 - Cover both the pager UI flow and non-interactive/headless login entry points.
@@ -362,35 +367,36 @@ The OIDC flow already has a loopback callback and manual-paste fallback, but bro
 
 ## Known starting points
 
-- `crates/codegen/xai-grok-shell/src/auth/oidc/login.rs`
-- `crates/codegen/xai-grok-shell/src/auth/oidc/protocol.rs`
+- \`crates/codegen/xai-grok-shell/src/auth/oidc/login.rs\`
+- \`crates/codegen/xai-grok-shell/src/auth/oidc/protocol.rs\`
 - pager doctor/diagnostics modules
 EOF
-} | create_issue "[P0] Make OAuth login and network diagnostics native to Termux" "termux,android,P0,auth,network" "$EPIC_NUM")"
+AUTH_URL="$(create_issue_from_file "[P0] Make OAuth login and network diagnostics native to Termux" "termux,android,P0,auth,network" "$EPIC_NUM" "$TMP_ROOT/auth.md")"
 AUTH_NUM="$(issue_number "$AUTH_URL")"
 link_blocked_by "$AUTH_NUM" "$PLATFORM_NUM"
 link_blocked_by "$AUTH_NUM" "$BUILD_NUM"
 link_blocked_by "$AUTH_NUM" "$PATHS_NUM"
 
-TOOLS_URL="$({
-  printf 'Baseline: `%s@%s`.\n\n' "$UPSTREAM" "$UPSTREAM_SHA"
-  cat <<'EOF'
+# 7. TOOLS
+cat <<EOF > "$TMP_ROOT/tools.md"
+Baseline: \`$UPSTREAM@$UPSTREAM_SHA\`.
+
 ## Problem
 
-Release build scripts currently download/embed desktop Linux or macOS assets for tools such as `rg` and `fd`, with unsupported-target failures for Android. Shipping a Linux binary inside an otherwise native Android executable would reintroduce ABI and loader failures at runtime.
+Release build scripts currently download/embed desktop Linux or macOS assets for tools such as \`rg\` and \`fd\`, with unsupported-target failures for Android. Shipping a Linux binary inside an otherwise native Android executable would reintroduce ABI and loader failures at runtime.
 
 ## Scope
 
 - Make Android release builds skip automatic desktop asset bundling unless an explicitly supplied binary is verified as Android/Bionic-compatible.
-- Resolve native Termux tools from `$PATH`, including at least `bash`, `git`, `rg`, and `fd` where enabled.
-- Define package dependencies and graceful fallback behavior for optional `bfs`/`ugrep` features.
+- Resolve native Termux tools from \`\$PATH\`, including at least \`bash\`, \`git\`, \`rg\`, and \`fd\` where enabled.
+- Define package dependencies and graceful fallback behavior for optional \`bfs\`/\`ugrep\` features.
 - Keep extracted executables and vendor caches in private executable storage, never shared storage.
 - Validate child-process spawn, cancellation, signals, pipes, redirects, PTY behavior, and exit-status handling under Android.
-- Report missing dependencies with exact `pkg install ...` remediation.
+- Report missing dependencies with exact \`pkg install ...\` remediation.
 
 ## Acceptance criteria
 
-- Android release builds do not download a `*-unknown-linux-*` tool artifact automatically.
+- Android release builds do not download a \`*-unknown-linux-*\` tool artifact automatically.
 - Search, file discovery, Git, shell execution, cancellation, and timeout smoke tests pass in stock Termux.
 - Missing optional tools degrade explicitly without crashing the agent.
 - Explicit bundle overrides are rejected when the ELF target/loader is incompatible.
@@ -398,18 +404,19 @@ Release build scripts currently download/embed desktop Linux or macOS assets for
 
 ## Known starting points
 
-- `crates/codegen/xai-grok-shell/build.rs`
-- `crates/codegen/xai-grok-tools/build.rs`
-- runtime resolvers under `xai-grok-shell` and `xai-grok-tools`
+- \`crates/codegen/xai-grok-shell/build.rs\`
+- \`crates/codegen/xai-grok-tools/build.rs\`
+- runtime resolvers under \`xai-grok-shell\` and \`xai-grok-tools\`
 EOF
-} | create_issue "[P0] Use native Termux runtime tools instead of bundled Linux executables" "termux,android,P0,build,runtime,dependencies" "$EPIC_NUM")"
+TOOLS_URL="$(create_issue_from_file "[P0] Use native Termux runtime tools instead of bundled Linux executables" "termux,android,P0,build,runtime,dependencies" "$EPIC_NUM" "$TMP_ROOT/tools.md")"
 TOOLS_NUM="$(issue_number "$TOOLS_URL")"
 link_blocked_by "$TOOLS_NUM" "$BUILD_NUM"
 link_blocked_by "$TOOLS_NUM" "$PATHS_NUM"
 
-UX_URL="$({
-  printf 'Baseline: `%s@%s`.\n\n' "$UPSTREAM" "$UPSTREAM_SHA"
-  cat <<'EOF'
+# 8. UX
+cat <<EOF > "$TMP_ROOT/ux.md"
+Baseline: \`$UPSTREAM@$UPSTREAM_SHA\`.
+
 ## Problem
 
 Desktop link, clipboard, image/file paste, and microphone assumptions cannot simply be exposed unchanged in a terminal-only Android host. Termux needs capability-driven integration and honest graceful fallbacks.
@@ -417,10 +424,10 @@ Desktop link, clipboard, image/file paste, and microphone assumptions cannot sim
 ## Scope
 
 - Use the shared Android URL opener for every TUI link/CTA, not only OAuth.
-- Add optional text clipboard integration through `termux-clipboard-get` / `termux-clipboard-set` when Termux:API is available.
+- Add optional text clipboard integration through \`termux-clipboard-get\` / \`termux-clipboard-set\` when Termux:API is available.
 - Keep OSC 52 as an appropriate copy fallback; do not pretend it can read clipboard contents.
 - Hide or clearly disable image/file clipboard ingestion on the initial port unless a tested Android implementation exists.
-- Keep voice/microphone UI disabled by capability, with a future backend seam rather than a crashing `cpal` path.
+- Keep voice/microphone UI disabled by capability, with a future backend seam rather than a crashing \`cpal\` path.
 - Ensure Unicode, CJK IME, bracketed paste, text selection, tmux/screen, terminal resize, Ctrl+C, and terminal restoration remain correct.
 
 ## Acceptance criteria
@@ -431,21 +438,22 @@ Desktop link, clipboard, image/file paste, and microphone assumptions cannot sim
 - Every URL-opening surface uses the same tested platform service.
 - Unsupported image/file/voice controls are not misleadingly presented as functional.
 EOF
-} | create_issue "[P1] Integrate Termux browser and text clipboard with graceful capability fallbacks" "termux,android,P1,ux,runtime" "$EPIC_NUM")"
+UX_URL="$(create_issue_from_file "[P1] Integrate Termux browser and text clipboard with graceful capability fallbacks" "termux,android,P1,ux,runtime" "$EPIC_NUM" "$TMP_ROOT/ux.md")"
 UX_NUM="$(issue_number "$UX_URL")"
 link_blocked_by "$UX_NUM" "$PLATFORM_NUM"
 link_blocked_by "$UX_NUM" "$DEPS_NUM"
 
-SECURITY_URL="$({
-  printf 'Baseline: `%s@%s`.\n\n' "$UPSTREAM" "$UPSTREAM_SHA"
-  cat <<'EOF'
+# 9. SECURITY
+cat <<EOF > "$TMP_ROOT/security.md"
+Baseline: \`$UPSTREAM@$UPSTREAM_SHA\`.
+
 ## Problem
 
 The desktop sandbox model is built around platform-specific kernel mechanisms. An Android/Termux build must not silently downgrade while still presenting itself as kernel-confined, and PRoot must not be described as a security boundary.
 
 ## Scope
 
-- Introduce an explicit Termux sandbox state such as `policy-only`, distinct from kernel-enforced and off.
+- Introduce an explicit Termux sandbox state such as \`policy-only\`, distinct from kernel-enforced and off.
 - Retain tool allow/deny rules, permission prompts, workspace path validation, sensitive-path protection, hook/config write protection, and shared-storage restrictions.
 - Disable claims of filesystem/network kernel confinement unless a real Android kernel mechanism is probed and verified on-device.
 - Audit subprocess inheritance, environment leakage, credential paths, symlink/hardlink handling, executable staging, and workspace escapes on Android filesystems.
@@ -453,21 +461,22 @@ The desktop sandbox model is built around platform-specific kernel mechanisms. A
 
 ## Acceptance criteria
 
-- UI, `grok doctor`, logs, and docs all report the actual sandbox strength.
-- A policy-only Termux build never labels itself `sandbox-enforced`.
+- UI, \`grok doctor\`, logs, and docs all report the actual sandbox strength.
+- A policy-only Termux build never labels itself \`sandbox-enforced\`.
 - Security-sensitive operations fail closed when required filesystem semantics are unavailable.
 - Tests cover shared-storage escape attempts, symlink traversal, protected config/auth writes, and unsupported hard-sandbox requests.
 - Desktop sandbox behavior and wording remain unchanged.
 EOF
-} | create_issue "[P1] Provide truthful policy-only sandboxing and Android security guards" "termux,android,P1,security,runtime" "$EPIC_NUM")"
+SECURITY_URL="$(create_issue_from_file "[P1] Provide truthful policy-only sandboxing and Android security guards" "termux,android,P1,security,runtime" "$EPIC_NUM" "$TMP_ROOT/security.md")"
 SECURITY_NUM="$(issue_number "$SECURITY_URL")"
 link_blocked_by "$SECURITY_NUM" "$PLATFORM_NUM"
 link_blocked_by "$SECURITY_NUM" "$DEPS_NUM"
 link_blocked_by "$SECURITY_NUM" "$PATHS_NUM"
 
-LIFECYCLE_URL="$({
-  printf 'Baseline: `%s@%s`.\n\n' "$UPSTREAM" "$UPSTREAM_SHA"
-  cat <<'EOF'
+# 10. LIFECYCLE
+cat <<EOF > "$TMP_ROOT/lifecycle.md"
+Baseline: \`$UPSTREAM@$UPSTREAM_SHA\`.
+
 ## Problem
 
 Long-running coding-agent sessions create child processes, sockets, background tasks, and checkpoint state. Android may suspend or kill the host process, and aggressive desktop concurrency can be unreliable on a mobile device.
@@ -489,14 +498,15 @@ Long-running coding-agent sessions create child processes, sockets, background t
 - Wake lock acquisition/release is balanced in success, error, cancellation, and crash-recovery tests.
 - Termux defaults reduce process pressure without changing desktop defaults.
 EOF
-} | create_issue "[P1] Harden process lifecycle, concurrency, wake locks, and session resume on Android" "termux,android,P1,runtime" "$EPIC_NUM")"
+LIFECYCLE_URL="$(create_issue_from_file "[P1] Harden process lifecycle, concurrency, wake locks, and session resume on Android" "termux,android,P1,runtime" "$EPIC_NUM" "$TMP_ROOT/lifecycle.md")"
 LIFECYCLE_NUM="$(issue_number "$LIFECYCLE_URL")"
 link_blocked_by "$LIFECYCLE_NUM" "$BUILD_NUM"
 link_blocked_by "$LIFECYCLE_NUM" "$PATHS_NUM"
 
-DIST_URL="$({
-  printf 'Baseline: `%s@%s`.\n\n' "$UPSTREAM" "$UPSTREAM_SHA"
-  cat <<'EOF'
+# 11. DISTRIBUTION
+cat <<EOF > "$TMP_ROOT/dist.md"
+Baseline: \`$UPSTREAM@$UPSTREAM_SHA\`.
+
 ## Problem
 
 The upstream updater and installers target macOS, desktop Linux, and Windows. A Termux package must never replace itself with an upstream Linux artifact, while a standalone Termux install needs its own signed release channel and ABI-specific artifact.
@@ -504,9 +514,9 @@ The upstream updater and installers target macOS, desktop Linux, and Windows. A 
 ## Scope
 
 - Model at least package-managed Termux installs, standalone Termux installs, and upstream desktop installs as distinct modes.
-- Disable in-app binary replacement for package-managed installs and direct users to `pkg upgrade`.
+- Disable in-app binary replacement for package-managed installs and direct users to \`pkg upgrade\`.
 - Point standalone Termux updates only at this fork's Android/Termux artifacts and manifests.
-- Use unambiguous artifact names such as `grok-<version>-termux-aarch64`; never alias them to `linux-aarch64`.
+- Use unambiguous artifact names such as \`grok-<version>-termux-aarch64\`; never alias them to \`linux-aarch64\`.
 - Publish checksums and signed provenance; verify before activation and retain rollback-safe atomic replacement.
 - Provide a Termux package recipe with explicit runtime dependencies and a separate reviewed standalone installer.
 - Preserve upstream LICENSE, NOTICE, and third-party notices and identify the port as unofficial.
@@ -521,18 +531,19 @@ The upstream updater and installers target macOS, desktop Linux, and Windows. A 
 
 ## Known starting point
 
-- `crates/codegen/xai-grok-update/`
+- \`crates/codegen/xai-grok-update/\`
 EOF
-} | create_issue "[P1] Add Termux-native packaging, release artifacts, and updater isolation" "termux,android,P1,distribution,security" "$EPIC_NUM")"
+DIST_URL="$(create_issue_from_file "[P1] Add Termux-native packaging, release artifacts, and updater isolation" "termux,android,P1,distribution,security" "$EPIC_NUM" "$TMP_ROOT/dist.md")"
 DIST_NUM="$(issue_number "$DIST_URL")"
 link_blocked_by "$DIST_NUM" "$BUILD_NUM"
 link_blocked_by "$DIST_NUM" "$TOOLS_NUM"
 link_blocked_by "$DIST_NUM" "$PATHS_NUM"
 link_blocked_by "$DIST_NUM" "$SECURITY_NUM"
 
-CI_URL="$({
-  printf 'Baseline: `%s@%s`.\n\n' "$UPSTREAM" "$UPSTREAM_SHA"
-  cat <<'EOF'
+# 12. CI & RELEASE MATRIX
+cat <<EOF > "$TMP_ROOT/ci.md"
+Baseline: \`$UPSTREAM@$UPSTREAM_SHA\`.
+
 ## Problem
 
 Cross-compilation alone cannot prove that authentication, TUI/PTY behavior, Android resolver integration, filesystem semantics, process lifecycle, and page-size compatibility work in real Termux environments.
@@ -562,15 +573,16 @@ The device matrix should cover:
 - Upstream desktop CI remains green and is not weakened to accommodate the port.
 - Failures preserve logs without leaking auth tokens, local identities, private paths, or session content.
 EOF
-} | create_issue "[P1] Add Android cross-build CI and a real-device Termux release matrix" "termux,android,P1,testing,build" "$EPIC_NUM")"
+CI_URL="$(create_issue_from_file "[P1] Add Android cross-build CI and a real-device Termux release matrix" "termux,android,P1,testing,build" "$EPIC_NUM" "$TMP_ROOT/ci.md")"
 CI_NUM="$(issue_number "$CI_URL")"
 link_blocked_by "$CI_NUM" "$BUILD_NUM"
 link_blocked_by "$CI_NUM" "$AUTH_NUM"
 link_blocked_by "$CI_NUM" "$TOOLS_NUM"
 
-DOCS_URL="$({
-  printf 'Initial baseline: `%s@%s`.\n\n' "$UPSTREAM" "$UPSTREAM_SHA"
-  cat <<'EOF'
+# 13. DOCS & SYNC
+cat <<EOF > "$TMP_ROOT/docs.md"
+Initial baseline: \`$UPSTREAM@$UPSTREAM_SHA\`.
+
 ## Problem
 
 The repository is periodically synced from an internal monorepo, and the root workspace manifest is generated. A long-lived Termux fork needs a low-conflict patch strategy, explicit provenance, and documentation that does not confuse users about official support or platform guarantees.
@@ -593,7 +605,7 @@ The repository is periodically synced from an internal monorepo, and the root wo
 - Every release names its upstream commit and downstream patch revision.
 - Support claims match runtime capability reporting and security wording.
 EOF
-} | create_issue "[P2] Document the Termux port and maintain a low-conflict upstream sync workflow" "termux,android,P2,documentation,upstream-sync" "$EPIC_NUM")"
+DOCS_URL="$(create_issue_from_file "[P2] Document the Termux port and maintain a low-conflict upstream sync workflow" "termux,android,P2,documentation,upstream-sync" "$EPIC_NUM" "$TMP_ROOT/docs.md")"
 DOCS_NUM="$(issue_number "$DOCS_URL")"
 link_blocked_by "$DOCS_NUM" "$DIST_NUM"
 link_blocked_by "$DOCS_NUM" "$CI_NUM"
