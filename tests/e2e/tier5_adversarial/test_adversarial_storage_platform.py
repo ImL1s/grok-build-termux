@@ -78,7 +78,7 @@ def check_storage_quarantine(path_str: str) -> bool:
         return True
 
 
-def encode_cwd_slug_hash(cwd: str, max_bytes: usize = 255) -> str:
+def encode_cwd_slug_hash(cwd: str, max_bytes: int = 255) -> str:
     """Simulates encode_cwd_dirname from xai-grok-config/src/paths.rs."""
     url_encoded = urllib.parse.quote(cwd, safe="")
     if len(url_encoded.encode("utf-8")) <= 255:
@@ -852,8 +852,11 @@ class TestAdversarialSandboxAndPolicyEnforcement(unittest.TestCase):
         minimum_version = "not-a-valid-semver"
         """
         # Parsing should identify fail_closed and invalid version override
-        import toml
-        parsed = toml.loads(sample_toml_fail_closed)
+        try:
+            import tomllib
+        except ImportError:
+            import toml as tomllib
+        parsed = tomllib.loads(sample_toml_fail_closed)
         self.assertTrue(parsed.get("fail_closed", False))
         min_ver = parsed["version_overrides"][0]["minimum_version"]
         self.assertFalse(min_ver.replace(".", "").isdigit())

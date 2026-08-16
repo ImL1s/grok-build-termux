@@ -115,9 +115,9 @@ def main():
         if not args.json:
             status_icon = "✓" if (res["failures"] == 0 and res["errors"] == 0) else "✗"
             print(
-                f"[{status_icon}] {tier_label:<55} "
+                f"[{status_icon}] {tier_label:<50} "
                 f"Tests: {res['total']:>3} | Passed: {res['passed']:>3} | "
-                f"Failed: {res['failures']:>2} | Time: {res['elapsed_seconds']:.2f}s"
+                f"Failed: {res['failures']:>2} | Errors: {res['errors']:>2} | Time: {res['elapsed_seconds']:.2f}s"
             )
 
     elapsed_total = round(time.time() - start_total, 3)
