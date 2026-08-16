@@ -1,0 +1,219 @@
+name: Release Automation
+
+'on':
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release version tag (e.g. v1.0.0)'
+        required: false
+        default: ''
+        type: string
+      draft:
+        description: 'Publish as draft release'
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: 'Publish as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: Prepare Release Metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      draft: ${{ steps.meta.outputs.draft }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - name: Resolve Release Tag & Flags
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_DRAFT: ${{ inputs.draft }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
+            DRAFT="$INPUT_DRAFT"
+            PRERELEASE="$INPUT_PRERELEASE"
+            if [ -z "$TAG" ]; then
+              if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+                TAG="$GITHUB_REF_NAME"
+              else
+                echo "::error::Release tag must be provided via input 'tag' when triggering workflow_dispatch manually."
+                exit 1
+              fi
+            fi
+          else
+            TAG="$GITHUB_REF_NAME"
+            DRAFT="false"
+            if [[ "$TAG" == *-* ]]; then
+              PRERELEASE="true"
+            else
+              PRERELEASE="false"
+            fi
+          fi
+
+          # Validate tag format strictly (e.g. v1.0.0, v1.2.3-rc1)
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tag '$TAG' is invalid. Must start with 'v' and follow semantic versioning (e.g. v1.0.0)."
+            exit 1
+          fi
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "draft=${DRAFT}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
+          echo "Resolved release metadata: tag=${TAG}, draft=${DRAFT}, prerelease=${PRERELEASE}"
+
+  build-and-package:
+    name: Build & Package (${{ matrix.target }})
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-linux-android
+            arch: aarch64
+            api: 24
+          - target: x86_64-linux-android
+            arch: x86_64
+            api: 24
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28b
+          link-to-sdk: true
+
+      - name: Install Protoc & System Dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          echo "PROTOC=$(which protoc)" >> "$GITHUB_ENV"
+
+      - name: Configure NDK Clang Toolchain Environment
+        run: |
+          NDK_BIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "${NDK_BIN}" >> "$GITHUB_PATH"
+          echo "TOOLCHAIN=${NDK_BIN}" >> "$GITHUB_ENV"
+          TARGET_SNAKE=$(echo "${{ matrix.target }}" | tr '-' '_')
+          TARGET_UPPER=$(echo "${{ matrix.target }}" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+          echo "CC_${TARGET_SNAKE}=${NDK_BIN}/${{ matrix.arch }}-linux-android${{ matrix.api }}-clang" >> "$GITHUB_ENV"
+          echo "CXX_${TARGET_SNAKE}=${NDK_BIN}/${{ matrix.arch }}-linux-android${{ matrix.api }}-clang++" >> "$GITHUB_ENV"
+          echo "AR_${TARGET_SNAKE}=${NDK_BIN}/llvm-ar" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_${TARGET_UPPER}_LINKER=${NDK_BIN}/${{ matrix.arch }}-linux-android${{ matrix.api }}-clang" >> "$GITHUB_ENV"
+
+      - name: Build Release Binary (16 KiB Page Size)
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,-z,relro,-z,now,-z,noexecstack -C link-arg=-Wl,-z,max-page-size=16384"
+        run: |
+          cargo build --release --target ${{ matrix.target }} -p xai-grok-pager-bin
+
+      - name: Strip Symbols (llvm-strip)
+        run: |
+          BINARY_PATH="target/${{ matrix.target }}/release/xai-grok-pager"
+          echo "Binary size before strip: $(ls -lh "$BINARY_PATH" | awk '{print $5}')"
+          "${TOOLCHAIN}/llvm-strip" --strip-unneeded "$BINARY_PATH"
+          echo "Binary size after strip: $(ls -lh "$BINARY_PATH" | awk '{print $5}')"
+
+      - name: Validate ELF Compliance (16 KiB Alignment & Bionic Libc)
+        run: |
+          python3 scripts/validate_elf.py "target/${{ matrix.target }}/release/xai-grok-pager" \
+            --target-arch ${{ matrix.arch }} \
+            --strict-16k \
+            --bionic-only
+
+      - name: Package Flat Release Tarball
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          STAGE="staging-${{ matrix.target }}"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+
+          cp "target/${{ matrix.target }}/release/xai-grok-pager" "${STAGE}/grok"
+          chmod 0755 "${STAGE}/grok"
+
+          cp LICENSE "${STAGE}/LICENSE"
+          chmod 0644 "${STAGE}/LICENSE"
+
+          cp README.md "${STAGE}/README.md"
+          chmod 0644 "${STAGE}/README.md"
+
+          TARBALL="grok-build-termux-${TAG}-${{ matrix.target }}.tar.gz"
+          tar -czf "${TARBALL}" -C "${STAGE}" grok LICENSE README.md
+          rm -rf "${STAGE}"
+
+          echo "Created release tarball: ${TARBALL}"
+          tar -ztvf "${TARBALL}"
+
+      - name: Upload Release Tarball Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-tarball-${{ matrix.target }}
+          path: grok-build-termux-*.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [prepare, build-and-package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-tarball-*
+          merge-multiple: true
+          path: ./dist
+
+      - name: Generate and Verify Checksums (SHA256SUMS.txt)
+        working-directory: ./dist
+        run: |
+          ls -la
+          sha256sum grok-build-termux-*.tar.gz > SHA256SUMS.txt
+          echo "=== Generated SHA256SUMS.txt ==="
+          cat SHA256SUMS.txt
+          echo "=== Verifying Checksums ==="
+          sha256sum -c SHA256SUMS.txt
+
+      - name: Create GitHub Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: Release ${{ needs.prepare.outputs.tag }}
+          draft: ${{ needs.prepare.outputs.draft == 'true' }}
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+          generate_release_notes: true
+          files: |
+            dist/grok-build-termux-*.tar.gz
+            dist/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

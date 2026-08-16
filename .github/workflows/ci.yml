@@ -5,6 +5,11 @@ on:
     branches: [ main, termux-native ]
   pull_request:
     branches: [ main, termux-native ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate-and-test:
@@ -14,10 +19,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install System Dependencies (Protobuf Compiler)
+        run: |
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android, x86_64-linux-android
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          targets: "aarch64-linux-android, x86_64-linux-android"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -30,25 +44,49 @@ jobs:
           ndk-version: r28b
           link-to-sdk: true
 
+      - name: Configure Android NDK Toolchain Environment
+        run: |
+          echo "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
       - name: Run ELF Validator Self-Tests
         run: |
           python3 scripts/validate_elf.py --self-test
 
-      - name: Run 4-Tier + Tier 5 E2E Test Suite (459 tests)
+      - name: Run Full 6-Tier E2E Test Suite (472 tests)
         run: |
           python3 tests/e2e/runner.py --tier all
           python3 tests/e2e/runner.py --tier tier5
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-      - name: Android aarch64 Cross-Check
+      - name: Build Android aarch64 Release Binary
         env:
           CC_aarch64_linux_android: aarch64-linux-android24-clang
           CXX_aarch64_linux_android: aarch64-linux-android24-clang++
           AR_aarch64_linux_android: llvm-ar
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: aarch64-linux-android24-clang
         run: |
-          export PATH="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin:${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
-          cargo check --target aarch64-linux-android -p xai-grok-pager-bin
+          cargo build --release --target aarch64-linux-android -p xai-grok-pager-bin
+
+      - name: Validate aarch64 Compiled ELF Binary
+        run: |
+          python3 scripts/validate_elf.py \
+            --target-arch aarch64 \
+            --strict-16k \
+            --bionic-only \
+            target/aarch64-linux-android/release/xai-grok-pager
+
+      - name: Build Android x86_64 Release Binary
+        env:
+          CC_x86_64_linux_android: x86_64-linux-android24-clang
+          CXX_x86_64_linux_android: x86_64-linux-android24-clang++
+          AR_x86_64_linux_android: llvm-ar
+          CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER: x86_64-linux-android24-clang
+        run: |
+          cargo build --release --target x86_64-linux-android -p xai-grok-pager-bin
+
+      - name: Validate x86_64 Compiled ELF Binary
+        run: |
+          python3 scripts/validate_elf.py \
+            --target-arch x86_64 \
+            --strict-16k \
+            --bionic-only \
+            target/x86_64-linux-android/release/xai-grok-pager

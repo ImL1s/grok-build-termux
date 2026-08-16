@@ -166,21 +166,132 @@ grok doctor --json
 
 ### Option A: Cross-Compiling from Host (macOS / Linux)
 
-Requirements:
-- Rust toolchain pinned in `rust-toolchain.toml`
-- Android NDK (r28b or newer, API level 24+)
-- Python 3.10+
+#### Prerequisites
+
+1. **Rust Toolchain**: Pinned in `rust-toolchain.toml` (or latest stable Rust):
+   ```sh
+   rustup target add aarch64-linux-android x86_64-linux-android
+   ```
+2. **Android NDK**: NDK r28b or newer (API level 24+ recommended).
+   - **macOS**: Install via Android Studio SDK Manager (`$HOME/Library/Android/sdk/ndk/28.*`) or Homebrew (`brew install --cask android-ndk`).
+   - **Linux**: Download from [Android NDK Downloads](https://developer.android.com/ndk/downloads) or install via SDK manager (`sdkmanager "ndk;28.1.13356709"`).
+3. **Protocol Buffers Compiler (`protoc`)**: Required by `xai-grok-tools-api` code generation.
+   - **macOS (Homebrew)**:
+     ```sh
+     brew install protobuf
+     ```
+   - **Ubuntu / Debian**:
+     ```sh
+     sudo apt-get update && sudo apt-get install -y protobuf-compiler
+     ```
+   - **Arch Linux**:
+     ```sh
+     sudo pacman -S protobuf
+     ```
+   - **Fedora / RHEL**:
+     ```sh
+     sudo dnf install -y protobuf-compiler
+     ```
+   - *Custom protoc location*: Set `export PROTOC=/path/to/bin/protoc`.
+4. **Python 3.10+**: Required for `scripts/validate_elf.py` ELF alignment validation.
+
+---
+
+#### Method 1: Automated Cross-Compilation (Recommended)
+
+Use the built-in helper script `scripts/build_android.sh` to automatically detect host NDK paths, configure target linkers, compile release binaries, strip debug symbols, and validate 16 KiB ELF alignment:
 
 ```sh
-# 1. Add Android target
-rustup target add aarch64-linux-android
+# Ensure helper script is executable
+chmod +x scripts/build_android.sh
 
-# 2. Build release binary with 16 KiB alignment
-cargo build --target aarch64-linux-android -p xai-grok-pager-bin --release
+# Build aarch64 release binary (default target, API 24)
+./scripts/build_android.sh --arch aarch64
 
-# 3. Validate ELF alignment
-python3 scripts/validate_elf.py target/aarch64-linux-android/release/xai-grok-pager
+# Build x86_64 release binary (for Android emulators / x86_64 devices)
+./scripts/build_android.sh --arch x86_64
+
+# Build both architectures in a single run
+./scripts/build_android.sh --arch all
 ```
+
+**CLI Flags for `scripts/build_android.sh`**:
+- `--arch <aarch64|x86_64|all>`: Target architecture (default: `aarch64`).
+- `--api <24..35>`: Android API level (default: `24`).
+- `--check`: Run `cargo check` only instead of full release compilation.
+- `--no-strip`: Skip symbol stripping (retains unstripped debug symbols).
+- `--no-validate`: Skip `scripts/validate_elf.py` post-build ELF verification.
+- `--ndk <PATH>`: Explicit path to Android NDK root.
+- `-v, --verbose`: Enable verbose diagnostic output.
+- `-h, --help`: Display help and options.
+
+---
+
+#### Method 2: Manual Cross-Compilation
+
+If you prefer to configure your environment manually or integrate with custom build pipelines:
+
+1. **Configure NDK Toolchain Path**:
+   Set `ANDROID_NDK_HOME` and export the LLVM prebuilt binary directory to your `$PATH`:
+
+   - **On macOS (Darwin)**:
+     ```sh
+     export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$HOME/Library/Android/sdk/ndk/28.2.13676358}"
+     export PATH="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/darwin-x86_64/bin:$PATH"
+     ```
+
+   - **On Linux (x86_64)**:
+     ```sh
+     export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-/opt/android-ndk}"
+     export PATH="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+     ```
+
+2. **Set Target Compilers & Linkers (API Level 24+)**:
+
+   - **For ARM64 (`aarch64-linux-android`)**:
+     ```sh
+     export CC_aarch64_linux_android="aarch64-linux-android24-clang"
+     export CXX_aarch64_linux_android="aarch64-linux-android24-clang++"
+     export AR_aarch64_linux_android="llvm-ar"
+     export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="aarch64-linux-android24-clang"
+     ```
+
+   - **For x86_64 (`x86_64-linux-android`)**:
+     ```sh
+     export CC_x86_64_linux_android="x86_64-linux-android24-clang"
+     export CXX_x86_64_linux_android="x86_64-linux-android24-clang++"
+     export AR_x86_64_linux_android="llvm-ar"
+     export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="x86_64-linux-android24-clang"
+     ```
+
+3. **Compile Release Binary**:
+   ```sh
+   # Build aarch64 binary
+   cargo build --target aarch64-linux-android -p xai-grok-pager-bin --release
+
+   # Build x86_64 binary
+   cargo build --target x86_64-linux-android -p xai-grok-pager-bin --release
+   ```
+
+4. **Strip Symbols**:
+   ```sh
+   # Strip aarch64 binary
+   llvm-strip target/aarch64-linux-android/release/xai-grok-pager
+
+   # Strip x86_64 binary
+   llvm-strip target/x86_64-linux-android/release/xai-grok-pager
+   ```
+
+5. **Validate 16 KiB Page Alignment & Bionic Dynamic Linker**:
+   ```sh
+   # Validate aarch64 binary
+   python3 scripts/validate_elf.py target/aarch64-linux-android/release/xai-grok-pager \
+     --target-arch aarch64 --strict-16k --bionic-only
+
+   # Validate x86_64 binary
+   python3 scripts/validate_elf.py target/x86_64-linux-android/release/xai-grok-pager \
+     --target-arch x86_64 --strict-16k --bionic-only
+   ```
 
 ### Option B: Compiling Directly Inside Termux
 
