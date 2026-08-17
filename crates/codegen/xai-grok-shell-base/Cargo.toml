@@ -29,13 +29,17 @@ xai-grok-shared = { workspace = true }
 xai-grok-version = { workspace = true }
 xai-tty-utils = { workspace = true }
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(all(unix, not(target_os = "android")))'.dependencies]
 libc = { workspace = true }
 nix = { workspace = true }
 # No `flamegraph` feature: that pulls in inferno (CDDL-1.0), which we keep out
 # of shipped binaries. stop() emits folded stacks via pprof's public Report
 # API instead; render externally with speedscope or inferno-flamegraph.
 pprof = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+libc = { workspace = true }
+nix = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }

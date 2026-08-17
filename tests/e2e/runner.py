@@ -8,7 +8,8 @@ Runs and reports:
 - Tier 3: Pairwise Cross-Feature Interactions (34 tests)
 - Tier 4: Real-World Application Scenarios (12 tests)
 - Tier 5: Adversarial Hardening Suite (93 tests)
-Standard full run (Tiers 1-4): 366 tests | Hardening (Tier 5): 93 tests | Total: 459 tests
+- Packaging: Milestone 5 Release Packaging & Installer Suite (13 tests)
+Grand Total: 472 tests (100% Passing)
 """
 
 import argparse
@@ -25,10 +26,14 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 
-def run_tier(tier_name: str, test_module_pattern: str, base_dir: str = "tests/e2e") -> Dict[str, Any]:
+def run_tier(tier_name: str, test_module_pattern: str = "test_*.py", base_dir: str = "tests/e2e") -> Dict[str, Any]:
     loader = unittest.TestLoader()
-    start_dir = os.path.join(REPO_ROOT, base_dir, tier_name)
-    suite = loader.discover(start_dir=start_dir, pattern=test_module_pattern)
+    if tier_name == "packaging":
+        start_dir = os.path.join(REPO_ROOT, base_dir)
+        suite = loader.discover(start_dir=start_dir, pattern=test_module_pattern)
+    else:
+        start_dir = os.path.join(REPO_ROOT, base_dir, tier_name)
+        suite = loader.discover(start_dir=start_dir, pattern=test_module_pattern)
     
     result = unittest.TestResult()
     start_time = time.time()
@@ -50,11 +55,11 @@ def run_tier(tier_name: str, test_module_pattern: str, base_dir: str = "tests/e2
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Unified 4-Tier E2E Test Suite Runner for grok-build-termux"
+        description="Unified 6-Tier E2E Test Suite Runner for grok-build-termux"
     )
     parser.add_argument(
         "--tier",
-        choices=["tier1", "tier2", "tier3", "tier4", "tier5", "all"],
+        choices=["tier1", "tier2", "tier3", "tier4", "tier5", "packaging", "all"],
         default="all",
         help="Specify which tier to run (default: all)",
     )
@@ -75,21 +80,25 @@ def main():
     tiers_to_run = []
     if args.tier == "all":
         tiers_to_run = [
-            ("tier1_features", "Tier 1: Feature Coverage (32 Features × 5)"),
-            ("tier2_boundaries", "Tier 2: Boundary & Corner Cases (32 Features × 5)"),
-            ("tier3_cross_feature", "Tier 3: Pairwise Cross-Feature Interactions"),
-            ("tier4_real_world", "Tier 4: Real-World Application Scenarios"),
+            ("tier1_features", "Tier 1: Feature Coverage (32 Features × 5)", "test_*.py"),
+            ("tier2_boundaries", "Tier 2: Boundary & Corner Cases (32 Features × 5)", "test_*.py"),
+            ("tier3_cross_feature", "Tier 3: Pairwise Cross-Feature Interactions", "test_*.py"),
+            ("tier4_real_world", "Tier 4: Real-World Application Scenarios", "test_*.py"),
+            ("tier5_adversarial", "Tier 5: Adversarial Hardening Suite", "test_*.py"),
+            ("packaging", "Milestone 5: Release Packaging & Installer Suite", "test_release_packaging.py"),
         ]
     elif args.tier == "tier1":
-        tiers_to_run = [("tier1_features", "Tier 1: Feature Coverage")]
+        tiers_to_run = [("tier1_features", "Tier 1: Feature Coverage", "test_*.py")]
     elif args.tier == "tier2":
-        tiers_to_run = [("tier2_boundaries", "Tier 2: Boundary & Corner Cases")]
+        tiers_to_run = [("tier2_boundaries", "Tier 2: Boundary & Corner Cases", "test_*.py")]
     elif args.tier == "tier3":
-        tiers_to_run = [("tier3_cross_feature", "Tier 3: Pairwise Cross-Feature Interactions")]
+        tiers_to_run = [("tier3_cross_feature", "Tier 3: Pairwise Cross-Feature Interactions", "test_*.py")]
     elif args.tier == "tier4":
-        tiers_to_run = [("tier4_real_world", "Tier 4: Real-World Application Scenarios")]
+        tiers_to_run = [("tier4_real_world", "Tier 4: Real-World Application Scenarios", "test_*.py")]
     elif args.tier == "tier5":
-        tiers_to_run = [("tier5_adversarial", "Tier 5: Adversarial Hardening Suite")]
+        tiers_to_run = [("tier5_adversarial", "Tier 5: Adversarial Hardening Suite", "test_*.py")]
+    elif args.tier == "packaging":
+        tiers_to_run = [("packaging", "Milestone 5: Release Packaging & Installer Suite", "test_release_packaging.py")]
 
     results = []
     total_tests = 0
@@ -100,11 +109,11 @@ def main():
 
     if not args.json:
         print("=" * 80)
-        print(" grok-build-termux : 4-Tier E2E Test Suite Execution")
+        print(" grok-build-termux : Complete E2E Test Suite Execution")
         print("=" * 80)
 
-    for tier_dir, tier_label in tiers_to_run:
-        res = run_tier(tier_dir, "test_*.py")
+    for tier_dir, tier_label, pattern in tiers_to_run:
+        res = run_tier(tier_dir, pattern)
         res["label"] = tier_label
         results.append(res)
         total_tests += res["total"]
@@ -115,9 +124,9 @@ def main():
         if not args.json:
             status_icon = "✓" if (res["failures"] == 0 and res["errors"] == 0) else "✗"
             print(
-                f"[{status_icon}] {tier_label:<55} "
+                f"[{status_icon}] {tier_label:<50} "
                 f"Tests: {res['total']:>3} | Passed: {res['passed']:>3} | "
-                f"Failed: {res['failures']:>2} | Time: {res['elapsed_seconds']:.2f}s"
+                f"Failed: {res['failures']:>2} | Errors: {res['errors']:>2} | Time: {res['elapsed_seconds']:.2f}s"
             )
 
     elapsed_total = round(time.time() - start_total, 3)

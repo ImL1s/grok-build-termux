@@ -1,6 +1,6 @@
 use std::fs;
 // OpenOptions is only used by the Unix-only profiler implementation.
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "android")))]
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
@@ -556,7 +556,7 @@ impl CpuProfileManager {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "android")))]
 mod platform {
     use std::fmt::Write as _;
     use std::io::Write as _;
@@ -687,7 +687,7 @@ mod platform {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(any(not(unix), target_os = "android"))]
 mod platform {
     use super::*;
 
@@ -762,7 +762,7 @@ mod tests {
     #[test]
     fn reports_platform_capabilities() {
         let manager = CpuProfileManager::new();
-        #[cfg(unix)]
+        #[cfg(all(unix, not(target_os = "android")))]
         {
             assert!(manager.profiling_compiled_in());
             assert!(manager.runtime_cpu_profile());
@@ -770,7 +770,7 @@ mod tests {
             // `platform::profile_formats()` for the wire-migration plan.
             assert_eq!(manager.profile_formats(), &[] as &[ProfileArtifactFormat]);
         }
-        #[cfg(not(unix))]
+        #[cfg(any(not(unix), target_os = "android"))]
         {
             assert!(!manager.profiling_compiled_in());
             assert!(!manager.runtime_cpu_profile());
